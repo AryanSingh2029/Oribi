@@ -647,27 +647,6 @@ If you are interested in the idea, feedback and contributions are welcome.
 
 ---
 
-# Contributing
-
-Contributions are welcome.
-
-Useful contributions include:
-
-- New semantic detection heuristics
-- Better dataset-grain detection
-- Statistical analysis
-- Analytical warnings
-- Relationship detection
-- Tests using real-world datasets
-- Documentation
-- Examples
-- Performance improvements
-- Data-source integrations
-
-If you want to propose a significant change, please open an issue first so the approach can be discussed.
-
----
-
 # Non-goals
 
 DataContext is **not** intended to:
@@ -684,6 +663,24 @@ DataContext is **not** intended to:
 The purpose is narrower:
 
 > **Provide useful analytical context that helps humans and AI systems reason about data more accurately.**
+
+---
+
+## Contributing
+
+Contributions are welcome. Useful contributions include:
+
+- New semantic detection heuristics
+- Better dataset-grain detection
+- Statistical analysis
+- Analytical warnings
+- Relationship detection
+- Tests using real-world datasets
+- Documentation and examples
+- Performance improvements
+- Data-source integrations
+
+Please open an issue to discuss significant changes to analytical behavior, the public API, dependencies, or architecture before implementation. Before opening a pull request, read the [Contributing Guide](CONTRIBUTING.md) for development setup, testing, and project conventions.
 
 ---
 
