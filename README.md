@@ -587,7 +587,13 @@ DataContext aims to remain small, understandable and easy to integrate into exis
 
 # Installation
 
-> Installation will be added once the first package release is available.
+DataContext currently supports Python 3.10+ and pandas 1.5+.
+
+Install from a source checkout:
+
+```bash
+pip install .
+```
 
 For development:
 
