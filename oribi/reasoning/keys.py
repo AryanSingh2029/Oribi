@@ -31,6 +31,7 @@ def detect_candidate_keys(
     row_count = len(frame)
     if row_count == 0:
         return ()
+    sample_support = min(1.0, (row_count / 100) ** 0.5)
 
     single_candidates: list[KeyCandidate] = []
     for name in sorted(names):
@@ -49,7 +50,7 @@ def detect_candidate_keys(
             single_candidates.append(KeyCandidate(
                 (name,),
                 "single",
-                round(min(.99, .6 + .4 * rate), 2),
+                round(min(.95, .5 + (.6 + .4 * rate - .5) * sample_support), 2),
                 rate,
                 (evidence,),
             ))
@@ -76,7 +77,8 @@ def detect_candidate_keys(
                 continue
             rate = distinct_pairs / row_count
             if rate >= _MIN_COMPOSITE_UNIQUENESS:
-                confidence = min(.9, .55 + (rate - _MIN_COMPOSITE_UNIQUENESS) * 5)
+                base_confidence = min(.9, .55 + (rate - _MIN_COMPOSITE_UNIQUENESS) * 5)
+                confidence = .5 + (base_confidence - .5) * sample_support
                 evidence = Evidence(
                     "composite_uniqueness",
                     f"{distinct_pairs} distinct pairs across {row_count} rows",

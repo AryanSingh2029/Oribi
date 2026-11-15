@@ -1,8 +1,13 @@
 """Composable rules for likely column roles."""
 
-from ..models.evidence import Evidence, SemanticContext
 import re
 
+from ..models.evidence import Evidence, SemanticContext
+
+
+_MEASURE_NAME_HINTS = ("amount", "price", "revenue", "sales", "quantity", "count", "total", "cost", "rate", "profit", "margin")
+_MIN_ROLE_SCORE = 0.55
+_AMBIGUITY_MARGIN = 0.12
 
 def infer_semantic(name: str, logical_type: str, stats: object, row_count: int) -> SemanticContext:
     votes: dict[str, float] = {}
@@ -11,17 +16,26 @@ def infer_semantic(name: str, logical_type: str, stats: object, row_count: int) 
     distinct = stats.distinct_count
     rate = stats.distinct_rate
     tokens = set(re.split(r"[^a-z0-9]+", lname))
-    if "id" in tokens or lname.endswith(("_key", "_code")):
-        votes["identifier"] = votes.get("identifier", 0) + .72
+    explicit_identifier_name = "id" in tokens or lname.endswith("_key")
+    code_name = lname.endswith("_code")
+    if explicit_identifier_name:
+        votes["identifier"] = .88
+        evidence.append(Evidence("name_identifier_hint", "Column name strongly suggests an identifier"))
+    elif code_name:
+        votes["identifier"] = .78
         evidence.append(Evidence("name_identifier_hint", "Column name suggests an identifier"))
     if row_count and rate >= .98 and distinct > 1:
-        votes["identifier"] = votes.get("identifier", 0) + (.75 if rate >= .98 else .62)
+        # Uniqueness is supporting evidence, not proof of business identity.
+        # It is deliberately weaker for numeric columns, which commonly hold
+        # continuous measures that happen to be unique in small samples.
+        unique_vote = .28 if logical_type == "numeric" else .62
+        votes["identifier"] = max(votes.get("identifier", 0), unique_vote)
         evidence.append(Evidence("mostly_unique", f"{distinct} distinct non-null values across {row_count} rows", {"distinct_count": distinct, "row_count": row_count, "distinct_rate": rate}))
     if logical_type == "numeric":
-        votes["measure"] = votes.get("measure", 0) + .48
+        votes["measure"] = .48
         evidence.append(Evidence("numeric_type", "Column has a numeric dtype"))
-        if any(w in lname for w in ("amount", "price", "revenue", "sales", "quantity", "count", "total", "cost", "rate")):
-            votes["measure"] += .2
+        if any(w in tokens for w in _MEASURE_NAME_HINTS):
+            votes["measure"] += .28
             evidence.append(Evidence("name_measure_hint", "Column name suggests a quantitative measure"))
     elif logical_type == "temporal":
         votes["temporal"] = .86
@@ -39,14 +53,15 @@ def infer_semantic(name: str, logical_type: str, stats: object, row_count: int) 
         else:
             votes["dimension"] = .62
             evidence.append(Evidence("text_dimension", "Text values are reusable across rows"))
-    if logical_type == "numeric" and distinct <= min(20, max(2, row_count // 10)):
-        votes["dimension"] = max(votes.get("dimension", 0), .55)
+    if logical_type == "numeric" and distinct <= min(20, max(3, row_count // 10)):
+        votes["dimension"] = max(votes.get("dimension", 0), .64)
         evidence.append(Evidence("low_cardinality_numeric", "Numeric values have low cardinality"))
     if not votes:
         return SemanticContext("unknown", 0.0, tuple(evidence))
     role, score = max(votes.items(), key=lambda item: (item[1], item[0]))
-    if len(votes) > 1:
-        ordered = sorted(votes.values(), reverse=True)
-        if ordered[0] - ordered[1] < .12:
-            return SemanticContext("unknown", round(min(ordered[0], .5), 2), tuple(evidence))
+    ranked_votes = sorted(votes.items(), key=lambda item: (-item[1], item[0]))
+    if score < _MIN_ROLE_SCORE:
+        return SemanticContext("unknown", round(score, 2), tuple(evidence))
+    if len(ranked_votes) > 1 and score - ranked_votes[1][1] < _AMBIGUITY_MARGIN:
+        return SemanticContext("unknown", round(min(score, .5), 2), tuple(evidence))
     return SemanticContext(role, round(min(score, .98), 2), tuple(evidence))

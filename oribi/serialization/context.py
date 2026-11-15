@@ -40,17 +40,12 @@ def to_context(context: Any, *, max_chars: int = 8000) -> str:
     result = "\n".join(lines)
     if len(result) <= max_chars:
         return result
-    marker = "[Additional context omitted to fit the requested character limit.]"
-    priority = header + grain_lines
-    result = "\n".join(priority)
-    for line in warning_lines:
-        candidate = result + "\n" + line if result else line
-        if len(candidate) + len(marker) + 1 > max_chars:
-            break
-        result = candidate
-    for line in column_lines:
-        candidate = result + "\n" + line if result else line
-        if len(candidate) + len(marker) + 1 > max_chars:
-            break
-        result = candidate
-    return (result + "\n" + marker)[:max_chars]
+    marker = "[Context truncated.]"
+    selected: list[str] = []
+    for line in header + grain_lines + warning_lines + column_lines:
+        candidate = "\n".join((*selected, line, marker))
+        if len(candidate) <= max_chars:
+            selected.append(line)
+    if not selected:
+        return marker[:max_chars]
+    return "\n".join((*selected, marker))

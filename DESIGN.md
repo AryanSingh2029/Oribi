@@ -1,4 +1,4 @@
-# DataContext v1 Architecture
+# Oribi v1 Architecture
 
 ## 1. Executive architectural decision
 
@@ -28,7 +28,7 @@ Detection owns what is observed. Reasoning owns qualified interpretations and re
 ## 3. Package structure
 
 ```text
-datacontext/
+oribi/
   __init__.py              # exports inspect and public result/model types
   _version.py              # package version
   api.py                   # inspect options, orchestration boundary
@@ -154,7 +154,7 @@ Confidence is a calibrated heuristic score, not a probability. The context shoul
 
 ```python
 import pandas as pd
-from datacontext import inspect
+from oribi import inspect
 
 df = pd.read_csv("orders.csv")
 context = inspect(df)
@@ -166,7 +166,7 @@ markdown = context.to_markdown()
 agent_context = context.to_context(max_chars=8_000)
 ```
 
-Keep `inspect(df, *, options=None)` as the only required operation. `ProfileOptions` may expose a small stable set such as `top_k`, `include_quantiles`, `max_exact_rows`, and `sample_size`; defaults should be sensible and documented. The return object should be a `DatasetContext`. Add type hints and docstrings to all public members, and keep detector classes private. Importing `datacontext` should not load optional AI integrations or perform work.
+Keep `inspect(df, *, options=None)` as the only required operation. `ProfileOptions` may expose a small stable set such as `top_k`, `include_quantiles`, `max_exact_rows`, and `sample_size`; defaults should be sensible and documented. The return object should be a `DatasetContext`. Add type hints and docstrings to all public members, and keep detector classes private. Importing `oribi` should not load optional AI integrations or perform work.
 
 `summary()` returns a string, concise and deterministic. `to_dict()` returns JSON-compatible primitives. `to_json()` uses the standard library encoder and stable key ordering. `to_markdown()` is a human-readable full report. `to_context()` is a compact, bounded prompt-oriented summary; it uses already computed context and deterministic prioritization, never reruns analysis.
 

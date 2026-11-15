@@ -11,6 +11,7 @@ from .models.profile import DatasetProfile
 from .profiling.columns import profile_column
 from .profiling.observations import AnalysisSession
 from .profiling.relationships import detect_relationships
+from .profiling.temporal import temporal_gap_warnings
 from .reasoning.keys import detect_keys
 from .reasoning.rules import dataset_warnings, reason_column
 from .reasoning.semantic import infer_semantic
@@ -62,6 +63,8 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
     for name in names:
         obs = observations[name]
         recommendations, warnings = reason_column(name, obs.logical_type, semantics[name], stats[name])
+        if obs.logical_type == "temporal":
+            warnings += temporal_gap_warnings(obs.series, name)
         columns.append(ColumnContext(name, str(obs.series.dtype), obs.logical_type, stats[name], semantics[name], recommendations, warnings))
     global_warnings = list(dataset_warnings(duplicates, nrows))
     for col in columns:

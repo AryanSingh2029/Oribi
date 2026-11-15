@@ -1,4 +1,4 @@
-"""Canonical result returned by :func:`datacontext.inspect`."""
+"""Canonical result returned by :func:`oribi.inspect`."""
 
 from dataclasses import dataclass
 from typing import Any
