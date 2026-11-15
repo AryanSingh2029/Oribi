@@ -141,10 +141,10 @@ Thresholds should be named constants or options, documented, deterministic, and 
 
 V1 should estimate the narrowest useful grain from likely entity identifiers and composite uniqueness, not attempt natural-language row description. Strategy:
 
-1. Collect identifier-like columns using semantic evidence and uniqueness statistics.
-2. Prefer a unique, plausible identifier as a row-level key candidate when it is complete (or nearly complete) and unique.
-3. If no single column is unique, form bounded pairs among the strongest identifier/dimension candidates; measure pair distinctness exactly where feasible. Limit pair count and skip very high-cardinality combinations when they exceed the configured work budget.
-4. Rank pair candidates by uniqueness, missingness, semantic plausibility, and whether their component columns are individually non-unique. A near-unique pair can be reported with lower confidence and explicit collision/missing counts.
+1. Collect every qualifying single-column candidate using the existing identifier role, uniqueness, and missingness thresholds.
+2. Independently evaluate pairs of non-unique identifier/dimension-like columns, even when one or more single-column candidates already exist. Canonicalize component names so input column order does not change candidate identity.
+3. Bound pair search to the strongest `max_key_columns` components (default 8, at most 28 pairs) and skip exact pair scans above `max_exact_rows` (default 100,000). Retain every qualifying candidate within that bounded search.
+4. Rank the collected candidates deterministically, listing simpler candidates first; ranking never discards a candidate. Grain selection is a separate step that prefers a qualifying single-column candidate, then chooses the strongest composite candidate when no single candidate exists.
 5. Render an interpretable label such as `order_id × product_id` only as a hypothesis. Do not translate that into `order_item` unless an optional deterministic label rule is strongly supported; generic labels are safer.
 6. Return `undetermined`/`None` with evidence when candidates are absent or ambiguous. Never force a grain.
 
