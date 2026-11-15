@@ -1,4 +1,4 @@
-from datacontext import inspect
+from oribi import inspect
 
 
 def test_roles_have_evidence(sales_frame):
@@ -12,4 +12,43 @@ def test_roles_have_evidence(sales_frame):
 
 def test_numeric_low_cardinality_can_be_dimension():
     context = inspect(__import__("pandas").DataFrame({"rating": [1, 2, 1, 3, 2]}))
-    assert context.columns[0].semantic.role in {"dimension", "measure"}
+    assert context.columns[0].semantic.role == "dimension"
+
+
+def test_unique_numeric_business_measure_stays_a_measure():
+    import pandas as pd
+
+    context = inspect(pd.DataFrame({"revenue": [10.0, 20.0, 35.0, 80.0]}))
+    column = context.columns[0]
+    assert column.semantic.role == "measure"
+    assert {r.operation for r in column.recommendations} >= {"SUM", "MEAN", "MEDIAN"}
+
+
+def test_numeric_identifier_name_outweighs_numeric_measure_type():
+    import pandas as pd
+
+    context = inspect(pd.DataFrame({"customer_id": [101, 102, 103, 104]}))
+    assert context.columns[0].semantic.role == "identifier"
+
+
+def test_reusable_code_is_eligible_for_relationship_detection():
+    import pandas as pd
+
+    frame = pd.DataFrame({"store_code": ["a", "a", "b", "b"], "store_name": ["East", "East", "West", "West"]})
+    context = inspect(frame)
+    assert context.columns[0].semantic.role == "identifier"
+    assert any(r.source_column == "store_code" and r.target_column == "store_name" for r in context.relationships)
+
+
+def test_ambiguous_unique_numeric_column_remains_unknown():
+    import pandas as pd
+
+    context = inspect(pd.DataFrame({"score": [11, 17, 23, 41]}))
+    assert context.columns[0].semantic.role == "unknown"
+
+
+def test_short_numeric_measure_name_is_enough_for_measure_inference():
+    import pandas as pd
+
+    context = inspect(pd.DataFrame({"amount": [2.0, 4.5, 8.0]}))
+    assert context.columns[0].semantic.role == "measure"

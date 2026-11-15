@@ -1,8 +1,8 @@
 import pandas as pd
 import pytest
 
-from datacontext import ProfileOptions, inspect
-from datacontext.exceptions import InvalidInputError
+from oribi import ProfileOptions, inspect
+from oribi.exceptions import InvalidInputError
 
 
 def test_inspect_returns_context_and_is_deterministic(sales_frame):

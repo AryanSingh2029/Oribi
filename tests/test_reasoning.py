@@ -1,4 +1,4 @@
-from datacontext import inspect
+from oribi import inspect
 
 
 def test_recommendations_and_warnings(sales_frame):

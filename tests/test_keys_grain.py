@@ -1,6 +1,6 @@
 import pandas as pd
 
-from datacontext import ProfileOptions, inspect
+from oribi import ProfileOptions, inspect
 
 
 def test_composite_key_and_grain(sales_frame):
@@ -123,3 +123,9 @@ def test_empty_and_tiny_frames_are_safe():
     assert empty.candidate_keys == ()
     assert empty.grain.status == "undetermined"
     assert tiny.candidate_keys
+
+
+def test_tiny_unique_column_does_not_receive_near_certain_grain_confidence():
+    context = inspect(pd.DataFrame({"record_id": [1, 2, 3]}))
+    assert context.grain.status == "estimated"
+    assert context.grain.confidence < 0.7

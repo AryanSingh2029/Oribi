@@ -2,6 +2,7 @@
 
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 from datetime import date, datetime
 from typing import Any
@@ -10,7 +11,7 @@ from typing import Any
 def _normalize(value: Any) -> Any:
     if is_dataclass(value):
         return {field.name: _normalize(getattr(value, field.name)) for field in fields(value)}
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {str(k): _normalize(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)):
         return [_normalize(v) for v in value]

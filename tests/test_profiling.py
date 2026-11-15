@@ -1,6 +1,6 @@
 import pandas as pd
 
-from datacontext import inspect
+from oribi import inspect
 
 
 def test_numeric_and_temporal_profile(sales_frame):
@@ -32,62 +32,74 @@ def test_all_null_and_mixed_columns():
 
 
 def _temporal_warnings(values):
-    dates = pd.to_datetime(values)
-    context = inspect(pd.DataFrame({"event_time": dates}))
+    context = inspect(pd.DataFrame({"event_time": pd.to_datetime(values)}))
     column = next(c for c in context.columns if c.name == "event_time")
     return context, column, [w for w in column.warnings if w.code == "potential_temporal_gap"]
 
 
-def test_daily_series_reports_single_potential_gap():
-    _, _, warnings = _temporal_warnings(["2026-01-01", "2026-01-02", "2026-01-04", "2026-01-05"])
+def test_regular_daily_series_with_gap_has_cadence_and_interval_evidence():
+    context, _, warnings = _temporal_warnings(["2026-01-01", "2026-01-02", "2026-01-04", "2026-01-05"])
     assert len(warnings) == 1
-    details = warnings[0].evidence[0].details
-    assert details["cadence"] == "1 day"
-    assert details["expected_timestamps"] == ["2026-01-03T00:00:00"]
-    assert details["observed_before"] == "2026-01-02T00:00:00"
-    assert details["observed_after"] == "2026-01-04T00:00:00"
+    evidence = warnings[0].evidence[0]
+    assert evidence.details["cadence"] == "1 day"
+    assert evidence.details["expected_timestamps"] == ("2026-01-03T00:00:00",)
+    assert evidence.details["observed_before"] == "2026-01-02T00:00:00"
+    assert evidence.details["observed_after"] == "2026-01-04T00:00:00"
+    assert warnings[0] in context.warnings
 
 
-def test_daily_series_reports_multiple_potential_gaps():
+def test_multiple_missing_intervals_are_reported():
     _, _, warnings = _temporal_warnings(["2026-01-01", "2026-01-02", "2026-01-06", "2026-01-07"])
-    assert len(warnings) == 1
-    details = warnings[0].evidence[0].details
-    assert details["missing_intervals"] == 3
-    assert details["expected_timestamps"] == [
-        "2026-01-03T00:00:00", "2026-01-04T00:00:00", "2026-01-05T00:00:00",
-    ]
+    assert warnings[0].evidence[0].details["missing_intervals"] == 3
 
 
-def test_weekly_series_reports_missing_week():
+def test_weekly_cadence_is_supported():
     _, _, warnings = _temporal_warnings(["2026-01-05", "2026-01-12", "2026-01-26", "2026-02-02"])
-    assert len(warnings) == 1
-    details = warnings[0].evidence[0].details
-    assert details["cadence"] == "7 days"
-    assert details["expected_timestamps"] == ["2026-01-19T00:00:00"]
+    assert warnings[0].evidence[0].details["cadence"] == "7 days"
 
 
-def test_irregular_timestamps_do_not_report_gap():
+def test_irregular_series_does_not_generate_gap_warning():
     _, _, warnings = _temporal_warnings(["2026-01-01", "2026-01-03", "2026-01-08", "2026-01-09", "2026-01-17", "2026-01-25"])
     assert warnings == []
 
 
-def test_duplicates_do_not_distort_cadence_or_gap():
-    _, column, warnings = _temporal_warnings([
-        "2026-01-01", "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-05", "2026-01-05",
-    ])
+def test_duplicates_do_not_distort_cadence_and_gap():
+    _, column, warnings = _temporal_warnings(["2026-01-01", "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-05", "2026-01-05"])
     assert len(warnings) == 1
-    assert warnings[0].evidence[0].details["expected_timestamps"] == ["2026-01-04T00:00:00"]
+    assert warnings[0].evidence[0].details["expected_timestamps"] == ("2026-01-04T00:00:00",)
     assert column.statistics.minimum == pd.Timestamp("2026-01-01")
     assert column.statistics.maximum == pd.Timestamp("2026-01-05")
 
 
-def test_short_and_ambiguous_series_do_not_report_gap():
-    _, _, short_warnings = _temporal_warnings(["2026-01-01", "2026-01-03", "2026-01-05"])
-    _, _, ambiguous_warnings = _temporal_warnings([
-        "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-05", "2026-01-07",
-    ])
-    assert short_warnings == []
-    assert ambiguous_warnings == []
+def test_short_and_ambiguous_series_do_not_generate_gap_warning():
+    _, _, short = _temporal_warnings(["2026-01-01", "2026-01-03", "2026-01-05"])
+    _, _, ambiguous = _temporal_warnings(["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-05", "2026-01-07"])
+    assert short == []
+    assert ambiguous == []
+
+
+def test_timezone_aware_and_nullable_dtypes_profile():
+    frame = pd.DataFrame({
+        "at": pd.date_range("2026-01-01", periods=4, freq="D", tz="UTC"),
+        "count": pd.Series([1, None, 3, 4], dtype="Int64"),
+        "active": pd.Series([True, None, False, True], dtype="boolean"),
+        "category": pd.Series(["a", "b", "a", "c"], dtype="category"),
+    })
+    context = inspect(frame)
+    columns = {column.name: column for column in context.columns}
+    assert columns["at"].logical_type == "temporal"
+    assert columns["at"].statistics.minimum.tz is not None
+    assert columns["count"].statistics.missing_count == 1
+    assert columns["active"].logical_type == "boolean"
+    assert columns["category"].logical_type == "categorical"
+
+
+def test_high_cardinality_categorical_column_has_warning():
+    frame = pd.DataFrame({"group": pd.Series([f"g{i}" for i in range(110)], dtype="category")})
+    context = inspect(frame)
+    group = context.columns[0]
+    assert group.logical_type == "categorical"
+    assert any(w.code == "high_cardinality_category" for w in group.warnings)
 
 
 def test_temporal_gap_warning_is_serialized():

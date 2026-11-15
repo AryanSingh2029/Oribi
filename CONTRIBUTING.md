@@ -1,12 +1,12 @@
-# Contributing to DataContext
+# Contributing to Oribi
 
-DataContext is an open-source Python library for turning pandas DataFrames into structured analytical context. Contributions are welcome, including bug fixes, analytical rules, tests, documentation, performance improvements, and ideas.
+Oribi is an open-source Python library for turning pandas DataFrames into structured analytical context. Contributions are welcome, including bug fixes, analytical rules, tests, documentation, performance improvements, and ideas.
 
-Analytical quality matters because DataContext's output can influence downstream analysis. Contributions should make the evidence and uncertainty behind an interpretation clear.
+Analytical quality matters because Oribi's output can influence downstream analysis. Contributions should make the evidence and uncertainty behind an interpretation clear.
 
 ## Before you start
 
-Open a [GitHub issue](https://github.com/samhoon000/DataContext/issues) before implementation when a change could affect how users interpret their data. This is especially useful for:
+Open a [GitHub issue](https://github.com/samhoon000/Oribi/issues) before implementation when a change could affect how users interpret their data. This is especially useful for:
 
 - New or changed semantic inference rules
 - Dataset grain or candidate-key detection
@@ -18,7 +18,7 @@ Small fixes, focused tests, and documentation improvements can generally go stra
 
 ## Development setup
 
-DataContext requires Python 3.10 or newer and pandas 1.5 or newer. The `dev` extra installs the project's test dependency, pytest.
+Oribi supports Python 3.10 through 3.14 and pandas 1.5.3 through the latest pandas 3.x release. The `dev` extra installs pytest and the build frontend.
 
 From a clone of the repository, create and activate a virtual environment, then install the development dependencies:
 
@@ -46,7 +46,7 @@ Run the test suite from the repository root:
 pytest
 ```
 
-The repository does not currently configure linting, formatting, type checking, CI workflows, or a package-build command. The `pyproject.toml` declares a setuptools build backend; no separate build frontend is included in the development dependencies.
+GitHub Actions runs the test suite on representative supported Python/pandas combinations and builds wheel and source distributions. The repository does not require a separate linting, formatting, or type-checking tool.
 
 ## Project structure
 
@@ -54,11 +54,11 @@ The implementation separates observations, analytical reasoning, the canonical c
 
 | Area | Responsibility |
 | --- | --- |
-| `datacontext/profiling/` | Collects DataFrame observations, column statistics, and conservative within-frame value mappings. |
-| `datacontext/reasoning/` | Infers semantic roles, candidate keys and grain, warnings, and aggregation recommendations from observations. |
-| `datacontext/models/` | Defines the typed context, statistics, evidence, warning, key, grain, and recommendation models. |
-| `datacontext/serialization/` | Renders an existing context as a dictionary, JSON, Markdown, or compact AI-oriented text. |
-| `datacontext/api.py` | Orchestrates the public `inspect(df)` pipeline. |
+| `oribi/profiling/` | Collects DataFrame observations, column statistics, and conservative within-frame value mappings. |
+| `oribi/reasoning/` | Infers semantic roles, candidate keys and grain, warnings, and aggregation recommendations from observations. |
+| `oribi/models/` | Defines the typed context, statistics, evidence, warning, key, grain, and recommendation models. |
+| `oribi/serialization/` | Renders an existing context as a dictionary, JSON, Markdown, or compact AI-oriented text. |
+| `oribi/api.py` | Orchestrates the public `inspect(df)` pipeline. |
 | `tests/` | Exercises the public API, profiling, inference, reasoning, and serialization behavior. |
 
 Detection records what the frame contains. Reasoning interprets those observations and records evidence and confidence. The context models hold the result, and serializers present that result. Keep these responsibilities separate when extending the library.
@@ -115,7 +115,7 @@ Tests should assert observable behavior and structured evidence where possible. 
 
 The runtime dependency set is intentionally small: pandas is the only required dependency. Before adding a runtime dependency, explain why it is needed, whether pandas or the standard library can meet the need, and the effect on installation and maintenance.
 
-The public entry point is `datacontext.inspect(df)`. It returns a `DatasetContext` with `summary()`, `to_dict()`, `to_json()`, `to_markdown()`, and `to_context()` methods. `ProfileOptions` is also exported for controlling a small set of profiling options. Treat public method signatures and serialized fields as compatibility-sensitive. Before changing them, consider existing callers, tests, documentation, and a migration path.
+The public entry point is `oribi.inspect(df)`. It returns a `DatasetContext` with `summary()`, `to_dict()`, `to_json()`, `to_markdown()`, and `to_context()` methods. `ProfileOptions` is also exported for controlling a small set of profiling options. Treat public method signatures and serialized fields as compatibility-sensitive. Before changing them, consider existing callers, tests, documentation, and a migration path.
 
 ## Pull requests
 
@@ -157,4 +157,4 @@ Before opening a pull request, check the items that apply:
 
 Update documentation or docstrings when a contribution changes user-visible behavior. Explain analytical behavior and its limitations as well as the API details.
 
-The repository currently has no `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue templates, or discussion configuration. Use [GitHub Issues](https://github.com/samhoon000/DataContext/issues) to report bugs, propose changes, or ask project questions.
+The repository currently has no `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue templates, or discussion configuration. Use [GitHub Issues](https://github.com/samhoon000/Oribi/issues) to report bugs, propose changes, or ask project questions.

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} / ${{ matrix.pandas_spec }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.10"
+            pandas_spec: "pandas==1.5.3"
+            numpy_spec: "numpy<2"
+          - python-version: "3.12"
+            pandas_spec: "pandas<4"
+            numpy_spec: "numpy"
+          - python-version: "3.14"
+            pandas_spec: "pandas<4"
+            numpy_spec: "numpy"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]" "${{ matrix.pandas_spec }}" "${{ matrix.numpy_spec }}"
+      - run: pytest --cov=oribi --cov-report=term-missing -q
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m build

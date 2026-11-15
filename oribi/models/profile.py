@@ -1,6 +1,8 @@
 """Observed dataset and column statistics."""
 
 from dataclasses import dataclass, field
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 
@@ -15,12 +17,15 @@ class StatisticsContext:
     mean: float | None = None
     median: float | None = None
     standard_deviation: float | None = None
-    quantiles: dict[str, float] = field(default_factory=dict)
+    quantiles: Mapping[str, float] = field(default_factory=dict)
     zero_count: int | None = None
     negative_count: int | None = None
     skewness: float | None = None
     top_values: tuple[tuple[Any, int], ...] = ()
     date_range: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "quantiles", MappingProxyType(dict(self.quantiles)))
 
 
 @dataclass(frozen=True)
