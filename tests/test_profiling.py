@@ -43,6 +43,8 @@ def test_regular_daily_series_with_gap_has_cadence_and_interval_evidence():
     evidence = warnings[0].evidence[0]
     assert evidence.details["cadence"] == "1 day"
     assert evidence.details["expected_timestamps"] == ("2026-01-03T00:00:00",)
+    assert evidence.details["observed_before"] == "2026-01-02T00:00:00"
+    assert evidence.details["observed_after"] == "2026-01-04T00:00:00"
     assert warnings[0] in context.warnings
 
 
@@ -62,9 +64,11 @@ def test_irregular_series_does_not_generate_gap_warning():
 
 
 def test_duplicates_do_not_distort_cadence_and_gap():
-    _, _, warnings = _temporal_warnings(["2026-01-01", "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-05", "2026-01-05"])
+    _, column, warnings = _temporal_warnings(["2026-01-01", "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-05", "2026-01-05"])
     assert len(warnings) == 1
     assert warnings[0].evidence[0].details["expected_timestamps"] == ("2026-01-04T00:00:00",)
+    assert column.statistics.minimum == pd.Timestamp("2026-01-01")
+    assert column.statistics.maximum == pd.Timestamp("2026-01-05")
 
 
 def test_short_and_ambiguous_series_do_not_generate_gap_warning():
@@ -96,3 +100,10 @@ def test_high_cardinality_categorical_column_has_warning():
     group = context.columns[0]
     assert group.logical_type == "categorical"
     assert any(w.code == "high_cardinality_category" for w in group.warnings)
+
+
+def test_temporal_gap_warning_is_serialized():
+    context, _, warnings = _temporal_warnings(["2026-01-01", "2026-01-02", "2026-01-04", "2026-01-05"])
+    assert warnings[0] in context.warnings
+    serialized = context.to_dict()
+    assert any(warning["code"] == "potential_temporal_gap" for warning in serialized["warnings"])
