@@ -81,6 +81,10 @@ python -m build
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow and [DESIGN.md](DESIGN.md) for architecture notes. Run the end-to-end example from the repository root with `python -m examples.quickstart`.
 
+## Releases
+
+The package version has one source of truth: `project.version` in `pyproject.toml`. To release, update that value and the relevant entry in `CHANGELOG.md`, commit and merge the change, then create and publish a GitHub Release whose tag is exactly `v<version>`. The release workflow reruns tests on Python 3.10–3.14, builds and validates a wheel and source distribution, then publishes those same artifacts to PyPI through GitHub Actions Trusted Publishing. A mismatch or any failed check stops publication. See [CONTRIBUTING.md](CONTRIBUTING.md) for the exact commands and repository setup.
+
 ## Planned work
 
 Additional data sources, configurable semantic rules, cross-table foreign-key analysis, and richer profiling options are future work. The current release focuses on pandas DataFrames and deterministic, evidence-bearing heuristics.
