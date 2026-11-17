@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from .evidence import GrainContext, KeyCandidate, Recommendation, RelationshipContext, SemanticContext, Warning
+from .evidence import CardinalityContext, ColumnRelationshipContext, GrainContext, KeyCandidate, Recommendation, RelationshipContext, SemanticContext, Warning
 from .profile import DatasetProfile, StatisticsContext
 
 
@@ -16,6 +16,8 @@ class ColumnContext:
     semantic: SemanticContext
     recommendations: tuple[Recommendation, ...] = ()
     warnings: tuple[Warning, ...] = ()
+    cardinality: CardinalityContext | None = None
+    relationships: tuple[ColumnRelationshipContext, ...] = ()
 
 
 @dataclass(frozen=True)

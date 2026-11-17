@@ -1,7 +1,7 @@
 """Public context models."""
 
 from .context import ColumnContext, DatasetContext
-from .evidence import Evidence, GrainContext, KeyCandidate, Recommendation, RelationshipContext, SemanticContext, Warning
+from .evidence import CardinalityContext, ColumnRelationshipContext, Evidence, GrainContext, KeyCandidate, Recommendation, RelationshipContext, SemanticContext, Warning
 from .profile import StatisticsContext
 
-__all__ = ["ColumnContext", "DatasetContext", "Evidence", "GrainContext", "KeyCandidate", "Recommendation", "RelationshipContext", "SemanticContext", "StatisticsContext", "Warning"]
+__all__ = ["CardinalityContext", "ColumnContext", "ColumnRelationshipContext", "DatasetContext", "Evidence", "GrainContext", "KeyCandidate", "Recommendation", "RelationshipContext", "SemanticContext", "StatisticsContext", "Warning"]

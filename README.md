@@ -41,11 +41,13 @@ json_text = context.to_json()
 - Per-column missingness, distinct counts, numeric summaries, categorical top values, and datetime bounds.
 - Likely roles such as identifier, measure, dimension, categorical, temporal, boolean, text, or unknown, with evidence.
 - Candidate single-column and bounded two-column keys, plus a separate likely-grain estimate.
-- Conservative within-DataFrame functional-dependency relationships.
+- Per-column cardinality (observed/unique values, uniqueness ratio, and records-per-value range), plus evidence-backed one-to-many and functional-dependency relationships.
 - Recommendations for likely numeric measures and identifier counts.
 - Warnings for duplicate rows, missingness, non-unique identifiers, negative or skewed measures, high-cardinality categories, and possible gaps in regular datetime series.
 
-Inferences are heuristics, not guarantees about business meaning. Temporal-gap warnings require a sufficiently long series with a dominant fixed cadence; irregular event timestamps and short series are left without a gap claim. Relationships describe observed value mappings within one frame and do not prove that a join is valid or safe.
+Inferences are heuristics, not guarantees about business meaning. Temporal-gap warnings require a sufficiently long series with a dominant fixed cadence; irregular event timestamps and short series are left without a gap claim. Relationship and cardinality summaries use observed values and distinguish uniqueness candidates from confirmed business keys. Within-frame mappings do not prove that a cross-table join is valid or safe.
+
+The compact context separates **COLUMN ROLES** (what a column may represent), **RELATIONSHIPS** (how columns connect to observations and one another), and **CARDINALITY** (the counts supporting those inferences). Grain and relationships are derived from observed values, metadata, and types; column names can contribute to role inference but cannot establish a relationship by themselves. Composite observation keys can include temporal columns, which helps describe event and time-series data with arbitrary column names.
 
 ## Public API
 
@@ -61,7 +63,7 @@ context = inspect(df, options=ProfileOptions(top_k=5, max_exact_rows=50_000))
 
 Options include `top_k`, `include_quantiles`, `max_exact_rows`, and `max_key_columns`. Column labels must be unique strings. Datetime-like text is not parsed automatically. Profiling is in-memory and may require several full-column scans; exact composite-key checks are bounded by the configured row and column limits.
 
-Confidence values describe heuristic strength; they are not calibrated probabilities. A candidate key is evidence of observed uniqueness under the profiling rules, not proof of a business key. Serialized output includes `schema_version`; treat changes to that output as version-sensitive until a stable compatibility policy is declared.
+Relationship confidence is deterministic and type-specific, not a calibrated probability. The model keeps direct `evidence_strength` separate from `semantic_confidence` (also exposed through the backwards-compatible `confidence` field), and each relationship retains its score inputs and weighted contributions in `confidence_components`. Key relationships combine observed uniqueness (45%), non-missing coverage (20%), sample generalization (20%), and inferred semantic support (15%). Temporal relationships weight datetime dtype (55%), semantic support (10%), coverage (20%), and generalization (15%). Measures weight numeric dtype (45%), semantic support (20%), coverage (20%), and generalization (15%). Grouping relationships weight reuse (50%), coverage (20%), group-size structure (15%), and generalization (15%). Sample generalization is a modest factor `0.7 + 0.3 * n/(n+12)` using observed rows, so it affects population inference without erasing observed facts. Functional, one-to-one, and one-to-many mappings use mapping coverage (55%), repeated/group structure (25%), and generalization (20%). A candidate key is evidence of observed uniqueness under the profiling rules, not proof of a business key. Numeric measures are associated with named columns only when grain confidence is at least 75% and the dataset has at least 20 rows; otherwise they are described at the observed record grain. Serialized output includes `schema_version`; treat changes to that output as version-sensitive until a stable compatibility policy is declared.
 
 ## Development
 

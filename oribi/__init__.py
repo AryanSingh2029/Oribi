@@ -3,6 +3,8 @@
 from .api import ProfileOptions, inspect
 from .exceptions import InvalidInputError, OribiError
 from .models import (
+    CardinalityContext,
+    ColumnRelationshipContext,
     ColumnContext,
     DatasetContext,
     Evidence,
@@ -16,7 +18,7 @@ from .models import (
 )
 
 __all__ = [
-    "ColumnContext", "DatasetContext", "Evidence", "GrainContext", "InvalidInputError",
+    "CardinalityContext", "ColumnContext", "ColumnRelationshipContext", "DatasetContext", "Evidence", "GrainContext", "InvalidInputError",
     "KeyCandidate", "ProfileOptions", "Recommendation", "RelationshipContext",
     "OribiError", "SemanticContext", "StatisticsContext", "Warning", "inspect",
 ]

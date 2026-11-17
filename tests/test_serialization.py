@@ -24,7 +24,7 @@ def test_context_renderers_use_scannable_hierarchy_and_compact_columns(sales_fra
     assert "Evidence:" not in compact
     assert "confidence" in compact
     assert "DATASET SUMMARY" not in compact
-    assert "- order_date" not in compact
+    assert "- order_date: temporal dimension" in compact
     assert " · " in compact
     assert "Missing 25.0%" not in compact
 

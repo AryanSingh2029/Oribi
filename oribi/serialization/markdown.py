@@ -18,13 +18,72 @@ def to_markdown(context: Any) -> str:
 
     lines += ["", "## Grain", ""]
     if context.grain and context.grain.status == "estimated":
-        lines.append(f"**{context.grain.label}** · confidence {context.grain.confidence:.2f}")
+        label = " + ".join(context.grain.columns) or context.grain.label
+        lines.append(f"**{label}** · candidate observation grain · confidence {context.grain.confidence:.0%}")
     else:
-        lines.append("Undetermined")
+        lines.append("Unknown · insufficient evidence")
     if context.grain and context.grain.evidence:
         lines += ["", "<details>", "<summary>Grain inference evidence</summary>", ""]
         lines.extend(f"- {e.statement}" for e in context.grain.evidence)
         lines += ["", "</details>"]
+
+    role_labels = {
+        "identifier": "identifier candidate",
+        "dimension": "categorical dimension",
+        "categorical": "categorical dimension",
+        "measure": "numeric measure",
+        "temporal": "temporal dimension",
+        "boolean": "boolean/flag",
+        "text": "text",
+        "unknown": "unknown",
+    }
+    lines += ["", "## Column roles", ""]
+    lines.extend(
+        f"- **{column.name}**: {role_labels.get(column.semantic.role, column.semantic.role)} "
+        f"({column.semantic.confidence:.0%} confidence)"
+        for column in sorted(context.columns, key=lambda item: item.name)
+    )
+
+    if context.relationships or any(column.relationships for column in context.columns):
+        lines += ["", "## Relationships", ""]
+        rendered_composite_keys: set[frozenset[str]] = set()
+        for column in sorted(context.columns, key=lambda item: item.name):
+            for relationship in column.relationships:
+                statement = relationship.evidence[0].statement if relationship.evidence else "observed structural evidence"
+                strength = (
+                    f"; {relationship.evidence_strength:.0%} evidence strength"
+                    if relationship.evidence_strength is not None else ""
+                )
+                if relationship.kind == "identifies_observations":
+                    lines.append(f"- **{column.name}** appears to identify observations ({statement}{strength}; {relationship.confidence:.0%} confidence).")
+                elif relationship.kind == "jointly_identifies_observations":
+                    composite_key = frozenset((column.name, *relationship.related_columns))
+                    if composite_key in rendered_composite_keys:
+                        continue
+                    rendered_composite_keys.add(composite_key)
+                    components = " + ".join((column.name, *relationship.related_columns))
+                    lines.append(f"- **{components}** jointly identify observations ({statement}{strength}; {relationship.confidence:.0%} confidence).")
+                elif relationship.kind == "groups_observations":
+                    lines.append(f"- **{column.name}** groups observations ({statement}{strength}; {relationship.confidence:.0%} confidence).")
+                elif relationship.kind == "measure_at_grain":
+                    grain = " + ".join(relationship.related_columns) if relationship.related_columns else "the observed record grain"
+                    lines.append(f"- **{column.name}** is a quantitative measure at {grain} ({statement}{strength}; {relationship.confidence:.0%} confidence).")
+                elif relationship.kind == "temporal_attribute":
+                    lines.append(f"- **{column.name}** is a temporal attribute associated with observations ({statement}{strength}; {relationship.confidence:.0%} confidence).")
+        one_to_one_pairs = {
+            frozenset((relation.source_column, relation.target_column))
+            for relation in context.relationships if relation.kind == "one_to_one"
+        }
+        for relation in context.relationships:
+            if relation.kind == "functional_dependency" and frozenset((relation.source_column, relation.target_column)) in one_to_one_pairs:
+                continue
+            statement = relation.evidence[0].statement if relation.evidence else "observed value mapping"
+            detail = f"{statement} · {relation.coverage:.1%} coverage · {relation.confidence:.0%} confidence"
+            if relation.kind == "one_to_many" and relation.evidence:
+                average = relation.evidence[0].details.get("average_entities_per_group")
+                if average is not None:
+                    detail += f" · average {average:.2f} {relation.target_column} values per {relation.source_column}"
+            lines.append(f"- **{relation.source_column} → {relation.target_column}: {relation.kind}** ({detail})")
 
     lines += ["", "## Columns", ""]
     for col in context.columns:
@@ -37,6 +96,17 @@ def to_markdown(context: Any) -> str:
             f"- Missing: {s.missing_rate:.1%} ({s.missing_count:,})",
             f"- Unique: {s.distinct_count:,}",
         ]
+        if col.cardinality is not None:
+            card = col.cardinality
+            if card.uniqueness_ratio is None:
+                lines.append(f"- Cardinality: no observed values across {card.row_count:,} rows")
+            else:
+                lines.append(
+                    f"- Cardinality: {card.unique_count:,} unique across {card.observed_count:,} observed values "
+                    f"({card.uniqueness_ratio:.1%} uniqueness); {card.average_records_per_value:.2f} records/value "
+                    f"(min {card.minimum_records_per_value}, max {card.maximum_records_per_value}); "
+                    f"{card.missing_count:,} missing ({card.missing_rate:.1%})"
+                )
         if s.minimum is not None or s.maximum is not None:
             lines.append(f"- Range: {s.minimum} to {s.maximum}")
         aggregations = [
@@ -52,12 +122,6 @@ def to_markdown(context: Any) -> str:
             lines += ["", "</details>"]
         lines.append("")
 
-    if context.relationships:
-        lines += ["## Relationships", ""]
-        lines.extend(
-            f"- {rel.source_column} → {rel.target_column}: {rel.kind}, coverage {rel.coverage:.1%}"
-            for rel in context.relationships
-        )
     if context.warnings:
         lines += ["", "## Analytical warnings", ""]
         for warning in context.warnings:
