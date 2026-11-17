@@ -9,29 +9,24 @@ permissions:
 
 jobs:
   test:
-    name: Python ${{ matrix.python-version }} / ${{ matrix.pandas_spec }}
+    name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - python-version: "3.10"
-            pandas_spec: "pandas==1.5.3"
-            numpy_spec: "numpy<2"
-          - python-version: "3.12"
-            pandas_spec: "pandas<4"
-            numpy_spec: "numpy"
-          - python-version: "3.14"
-            pandas_spec: "pandas<4"
-            numpy_spec: "numpy"
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]" "${{ matrix.pandas_spec }}" "${{ matrix.numpy_spec }}"
-      - run: pytest --cov=oribi --cov-report=term-missing -q
+      - run: python -m pip install --upgrade build pytest
+      - run: python -m build --wheel
+      - run: python -m pip install dist/*.whl
+      - name: Test installed package
+        working-directory: ${{ runner.temp }}
+        run: python -m pytest --import-mode=importlib -q "$GITHUB_WORKSPACE/tests"
 
   build:
     runs-on: ubuntu-latest
@@ -41,5 +36,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install --upgrade build twine
       - run: python -m build
+      - run: python -m twine check dist/*
+      - name: Validate artifact contents and clean installation
+        run: python scripts/validate_package.py
