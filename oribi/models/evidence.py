@@ -78,3 +78,48 @@ class RelationshipContext:
     coverage: float
     confidence: float
     evidence: tuple[Evidence, ...] = ()
+    semantic_confidence: float | None = None
+    confidence_components: Mapping[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.semantic_confidence is None:
+            object.__setattr__(self, "semantic_confidence", self.confidence)
+        object.__setattr__(self, "confidence_components", _freeze(self.confidence_components))
+
+
+@dataclass(frozen=True)
+class CardinalityContext:
+    """Observed value-frequency facts for one column (nulls excluded)."""
+
+    row_count: int
+    observed_count: int
+    unique_count: int
+    uniqueness_ratio: float | None
+    average_records_per_value: float | None
+    minimum_records_per_value: int | None
+    maximum_records_per_value: int | None
+    missing_count: int = 0
+    missing_rate: float = 0.0
+
+
+@dataclass(frozen=True)
+class ColumnRelationshipContext:
+    """A data-supported relationship between a column and observations.
+
+    ``confidence`` remains the backwards-compatible name for semantic
+    confidence. Evidence strength describes direct observed support, while
+    confidence components show the deterministic, type-specific score inputs.
+    """
+
+    kind: str
+    confidence: float
+    evidence: tuple[Evidence, ...] = ()
+    related_columns: tuple[str, ...] = ()
+    evidence_strength: float | None = None
+    semantic_confidence: float | None = None
+    confidence_components: Mapping[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.semantic_confidence is None:
+            object.__setattr__(self, "semantic_confidence", self.confidence)
+        object.__setattr__(self, "confidence_components", _freeze(self.confidence_components))

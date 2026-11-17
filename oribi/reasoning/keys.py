@@ -1,7 +1,6 @@
 """Candidate-key collection and separate grain selection."""
 
 from itertools import combinations
-import re
 
 import pandas as pd
 
@@ -10,7 +9,8 @@ from ..models.evidence import Evidence, GrainContext, KeyCandidate
 _MIN_SINGLE_UNIQUENESS = 0.98
 _MAX_SINGLE_MISSING_RATE = 0.02
 _MIN_COMPOSITE_UNIQUENESS = 0.95
-_COMPOSITE_ROLES = {"identifier", "dimension", "categorical", "boolean"}
+_SINGLE_KEY_ROLES = {"identifier", "dimension", "categorical", "boolean", "text", "unknown"}
+_COMPOSITE_ROLES = _SINGLE_KEY_ROLES | {"temporal"}
 
 
 def detect_candidate_keys(
@@ -23,22 +23,22 @@ def detect_candidate_keys(
 ) -> tuple[KeyCandidate, ...]:
     """Collect qualifying single and bounded pair candidates.
 
-    Pair search considers at most ``max_columns`` non-unique identifier or
-    dimension-like columns (28 pairs at the default limit of eight), and only
+    Pair search considers at most ``max_columns`` non-unique, non-measure
+    columns (28 pairs at the default limit of eight), and only
     runs below ``max_exact_rows``. This bounds exact combination scans while
     allowing all qualifying candidates in the searched set to be retained.
     """
     row_count = len(frame)
     if row_count == 0:
         return ()
-    sample_support = min(1.0, (row_count / 100) ** 0.5)
+    sample_support = row_count / (row_count + 4)
 
     single_candidates: list[KeyCandidate] = []
     for name in sorted(names):
         column_stats = stats[name]
         rate = column_stats.distinct_count / row_count
         if (
-            roles.get(name) == "identifier"
+            roles.get(name) in _SINGLE_KEY_ROLES
             and rate >= _MIN_SINGLE_UNIQUENESS
             and column_stats.missing_rate <= _MAX_SINGLE_MISSING_RATE
         ):
@@ -50,7 +50,7 @@ def detect_candidate_keys(
             single_candidates.append(KeyCandidate(
                 (name,),
                 "single",
-                round(min(.95, .5 + (.6 + .4 * rate - .5) * sample_support), 2),
+                round(rate * sample_support, 2),
                 rate,
                 (evidence,),
             ))
@@ -61,7 +61,7 @@ def detect_candidate_keys(
         (
             name for name in names
             if name not in single_columns
-            and _is_key_component(name, roles.get(name))
+            and _is_key_component(roles.get(name))
             and stats[name].distinct_count > 1
         ),
         key=lambda name: (-stats[name].distinct_rate, stats[name].missing_rate, name),
@@ -77,8 +77,7 @@ def detect_candidate_keys(
                 continue
             rate = distinct_pairs / row_count
             if rate >= _MIN_COMPOSITE_UNIQUENESS:
-                base_confidence = min(.9, .55 + (rate - _MIN_COMPOSITE_UNIQUENESS) * 5)
-                confidence = .5 + (base_confidence - .5) * sample_support
+                confidence = rate * sample_support
                 evidence = Evidence(
                     "composite_uniqueness",
                     f"{distinct_pairs} distinct pairs across {row_count} rows",
@@ -105,15 +104,15 @@ def detect_candidate_keys(
     ))
 
 
-def _is_key_component(name: str, role: str | None) -> bool:
-    """Allow established key-like name hints when role votes are ambiguous."""
-    if role in _COMPOSITE_ROLES:
-        return True
-    tokens = set(re.split(r"[^a-z0-9]+", name.lower()))
-    return "id" in tokens or name.lower().endswith(("_key", "_code"))
+def _is_key_component(role: str | None) -> bool:
+    """Permit measured, non-measure column roles as composite key components."""
+    return role in _COMPOSITE_ROLES
 
 
-def select_grain(candidates: tuple[KeyCandidate, ...]) -> GrainContext:
+def select_grain(
+    candidates: tuple[KeyCandidate, ...],
+    roles: dict[str, str] | None = None,
+) -> GrainContext:
     """Choose one preferred grain from the retained candidates."""
     if not candidates:
         return GrainContext("undetermined", None, (), 0.0, ())
@@ -121,7 +120,22 @@ def select_grain(candidates: tuple[KeyCandidate, ...]) -> GrainContext:
     # Preserve the existing preference for a single-column identifier when
     # available; candidate detection still retains every composite candidate.
     singles = [candidate for candidate in candidates if candidate.kind == "single"]
-    pool = singles or [candidate for candidate in candidates if candidate.kind == "composite"]
+    composites = [candidate for candidate in candidates if candidate.kind == "composite"]
+    temporal_composites = [
+        candidate for candidate in composites
+        if roles and any(roles.get(name) == "temporal" for name in candidate.columns)
+    ]
+    # A repeated dimension paired with time often describes observations more
+    # usefully than an unrelated, ambiguous numeric column that happens to be
+    # unique in this sample. Strong single identifier evidence still wins.
+    has_identifier_role = any(
+        roles and roles.get(candidate.columns[0]) == "identifier"
+        for candidate in singles
+    )
+    if temporal_composites and singles and not has_identifier_role:
+        pool = temporal_composites
+    else:
+        pool = singles or composites
     best = min(
         pool,
         key=lambda candidate: (
@@ -130,7 +144,7 @@ def select_grain(candidates: tuple[KeyCandidate, ...]) -> GrainContext:
             candidate.columns,
         ),
     )
-    label = " × ".join(best.columns)
+    label = " + ".join(best.columns)
     return GrainContext("estimated", label, best.columns, best.confidence, best.evidence)
 
 
@@ -148,22 +162,76 @@ def detect_keys(
         max_columns=max_columns,
         max_exact_rows=max_exact_rows,
     )
+    row_count = len(frame)
     if len(frame) == 0:
         grain = GrainContext(
             "undetermined", None, (), 0.0,
             (Evidence("empty_dataset", "No rows are available to estimate a key or grain"),),
         )
     elif candidates:
-        grain = select_grain(candidates)
+        grain = select_grain(candidates, roles)
+        temporal_candidates = [
+            name for name in names
+            if roles.get(name) == "temporal"
+            and stats[name].distinct_count / row_count >= _MIN_SINGLE_UNIQUENESS
+            and stats[name].missing_rate <= _MAX_SINGLE_MISSING_RATE
+        ]
+        if (
+            len(grain.columns) == 1
+            and roles.get(grain.columns[0]) == "unknown"
+            and temporal_candidates
+        ):
+            name = max(temporal_candidates, key=lambda item: (stats[item].distinct_rate, item))
+            uniqueness = stats[name].distinct_count / row_count
+            grain = GrainContext(
+                "estimated",
+                name,
+                (name,),
+                round(uniqueness * row_count / (row_count + 4), 2),
+                (Evidence(
+                    "unique_temporal_observations",
+                    f"{stats[name].distinct_count} distinct temporal values across {row_count} rows",
+                    {"distinct_count": stats[name].distinct_count, "row_count": row_count, "uniqueness_rate": uniqueness},
+                ),),
+            )
+    elif row_count and roles:
+        temporal_candidates = [
+            name for name in names
+            if roles.get(name) == "temporal"
+            and stats[name].distinct_count / row_count >= _MIN_SINGLE_UNIQUENESS
+            and stats[name].missing_rate <= _MAX_SINGLE_MISSING_RATE
+        ]
+        if temporal_candidates:
+            name = max(temporal_candidates, key=lambda item: (stats[item].distinct_rate, item))
+            uniqueness = stats[name].distinct_count / row_count
+            confidence = round(uniqueness * min(1.0, row_count / (row_count + 4)), 2)
+            grain = GrainContext(
+                "estimated",
+                name,
+                (name,),
+                confidence,
+                (Evidence(
+                    "unique_temporal_observations",
+                    f"{stats[name].distinct_count} distinct temporal values across {row_count} rows",
+                    {"distinct_count": stats[name].distinct_count, "row_count": row_count, "uniqueness_rate": uniqueness},
+                ),),
+            )
+        else:
+            grain = _undetermined_grain(frame, max_exact_rows)
     else:
-        code = "key_search_bounded" if len(frame) > max_exact_rows else "no_strong_key"
-        message = (
-            "Composite key search was skipped because the DataFrame exceeds max_exact_rows"
-            if len(frame) > max_exact_rows
-            else "No single column or tested column pair was sufficiently unique"
-        )
-        grain = GrainContext(
-            "undetermined", None, (), 0.0,
-            (Evidence(code, message, {"row_count": len(frame), "max_exact_rows": max_exact_rows}),),
-        )
+        grain = _undetermined_grain(frame, max_exact_rows)
     return candidates, grain
+
+
+def _undetermined_grain(frame: pd.DataFrame, max_exact_rows: int) -> GrainContext:
+    row_count = len(frame)
+    code = "key_search_bounded" if row_count > max_exact_rows else "no_strong_key"
+    message = (
+        "Composite key search was skipped because the DataFrame exceeds max_exact_rows"
+        if row_count > max_exact_rows
+        else "No single column or tested column pair was sufficiently unique"
+    )
+    return GrainContext(
+        "undetermined", None, (), 0.0,
+        (Evidence(code, message, {"row_count": row_count, "max_exact_rows": max_exact_rows}),),
+    )
