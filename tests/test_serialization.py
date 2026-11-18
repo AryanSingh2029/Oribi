@@ -95,3 +95,35 @@ def test_context_limit_keeps_an_explicit_marker_for_long_labels():
     rendered = context.to_context(max_chars=100)
     assert len(rendered) <= 100
     assert "[Context truncated.]" in rendered
+
+
+def test_markdown_prints_each_warning_message_once():
+    import pandas as pd
+
+    frame = pd.DataFrame({"amount": [1.0, -2.0, 3.0, 3.0]}).iloc[[0, 1, 2, 3, 3]]
+    context = inspect(frame)
+    markdown = context.to_markdown()
+    column_warning = next(w for w in context.warnings if w.code == "negative_measure_values")
+    dataset_warning = next(w for w in context.warnings if w.code == "duplicate_rows")
+    assert markdown.count(column_warning.message) == 1
+    assert markdown.count("negative values were observed") == 1
+    assert markdown.count(dataset_warning.message) == 1
+    column_section = markdown[markdown.index("### amount"):markdown.index("## Analytical warnings")]
+    assert f"Warning [{column_warning.severity}]: {column_warning.title}" in column_section
+    assert column_warning.message not in column_section
+    warnings_section = markdown[markdown.index("## Analytical warnings"):]
+    assert column_warning.message in warnings_section
+    assert column_warning.implication in warnings_section
+    assert dataset_warning.title in warnings_section
+
+
+def test_markdown_warning_change_leaves_structured_output_alone():
+    import pandas as pd
+
+    context = inspect(pd.DataFrame({"amount": [1.0, -2.0, 3.0]}))
+    column = next(c for c in context.columns if c.name == "amount")
+    assert [w.code for w in column.warnings] == ["negative_measure_values"]
+    assert "negative_measure_values" in [w.code for w in context.warnings]
+    exported = context.to_dict()
+    assert any(w["code"] == "negative_measure_values" for w in exported["warnings"])
+    assert json.loads(context.to_json()) == exported
