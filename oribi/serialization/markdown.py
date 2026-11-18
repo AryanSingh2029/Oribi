@@ -17,7 +17,7 @@ def to_markdown(context: Any, *, include_values: bool = False) -> str:
         lines.append(f"- Duplicate rows: {profile.duplicate_row_count:,}")
     if profile.index is not None:
         index = profile.index
-        names = ", ".join(name if name is not None else f"level {i}" for i, name in enumerate(index.names))
+        names = ", ".join(str(name) if name is not None else f"level {i}" for i, name in enumerate(index.names))
         lines.append(f"- DataFrame index ({names}): {index.unique_count:,} unique; {index.duplicate_count:,} duplicates; {index.missing_count:,} rows with null index values. Use the index or reset_index() to access its fields.")
 
     lines += ["", "## Grain", ""]
