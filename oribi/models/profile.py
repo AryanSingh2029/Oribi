@@ -22,6 +22,7 @@ class StatisticsContext:
     negative_count: int | None = None
     skewness: float | None = None
     top_values: tuple[tuple[Any, int], ...] = ()
+    top_frequencies: tuple[int, ...] = ()
     date_range: str | None = None
 
     def __post_init__(self) -> None:
@@ -34,3 +35,16 @@ class DatasetProfile:
     column_count: int
     duplicate_row_count: int | None
     duplicate_row_rate: float | None
+    index: "IndexContext | None" = None
+
+
+@dataclass(frozen=True)
+class IndexContext:
+    names: tuple[str | None, ...]
+    dtypes: tuple[str, ...]
+    level_count: int
+    unique_count: int
+    duplicate_count: int
+    missing_count: int
+    is_unique: bool
+    is_default: bool = False

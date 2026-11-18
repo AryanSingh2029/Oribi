@@ -1,6 +1,7 @@
 """Conservative within-frame column dependency detection."""
 
 import pandas as pd
+import math
 
 from ..models.evidence import (
     CardinalityContext,
@@ -265,6 +266,8 @@ def detect_relationships(
     max_rows: int = 100_000,
     candidate_keys: tuple[KeyCandidate, ...] = (),
     grain: GrainContext | None = None,
+    max_relationships: int = 40,
+    max_relationship_columns: int = 40,
 ) -> tuple[RelationshipContext, ...]:
     """Find observed value mappings and repeated group-to-entity links.
 
@@ -272,9 +275,9 @@ def detect_relationships(
     with each entity mapping to one repeated group value. Column names do not
     establish a relationship.
     """
-    if len(frame) == 0 or len(frame) > max_rows:
+    if len(frame) == 0 or len(frame) > max_rows or max_relationships == 0:
         return ()
-    max_relationship_columns = 40
+    search_columns = min(max_relationship_columns, max(8, math.ceil(math.sqrt(max_relationships * 4))))
     eligible_sources = [
         name for name, role in roles.items()
         if role in {"identifier", "dimension", "categorical", "boolean", "text", "temporal"}
@@ -284,8 +287,8 @@ def detect_relationships(
     eligible_sources = [name for name in eligible_sources if _nunique(frame[name]) <= max_distinct]
     eligible_targets = [name for name in eligible_targets if _nunique(frame[name]) <= max_distinct]
     rank = lambda name: (_nunique(frame[name]), name)
-    eligible_sources = sorted(eligible_sources, key=rank)[:max_relationship_columns]
-    eligible_targets = sorted(eligible_targets, key=rank)[:max_relationship_columns]
+    eligible_sources = sorted(eligible_sources, key=rank)[:search_columns]
+    eligible_targets = sorted(eligible_targets, key=rank)[:search_columns]
     results: list[RelationshipContext] = []
     for source in eligible_sources:
         for target in eligible_targets:
@@ -302,10 +305,15 @@ def detect_relationships(
             if source_values >= source_observed:
                 # A unique determinant maps trivially to every row-level value.
                 continue
-            unique_mapping = int(pairs.groupby(source, dropna=True)[target].nunique().le(1).sum())
+            mapping_counts = pairs.groupby(source, dropna=True)[target].nunique()
+            unique_mapping = int(mapping_counts.eq(1).sum())
             coverage = unique_mapping / source_values
+            affected_groups = int(mapping_counts.gt(1).sum())
+            violations = int((mapping_counts - 1).clip(lower=0).sum())
+            paired_rows = int(frame[[source, target]].notna().all(axis=1).sum())
+            missing_pairs = len(frame) - paired_rows
             target_values = _nunique(frame[target])
-            if coverage >= .98 and target_values > 1 and source_values <= target_values:
+            if coverage >= .98 and target_values > 1:
                 repeated_fraction = max(0.0, (source_observed - source_values) / source_observed)
                 confidence, components = _score(
                     {"mapping_coverage": coverage, "repeated_determinant_support": repeated_fraction,
@@ -314,10 +322,16 @@ def detect_relationships(
                      "generalization": 0.20},
                 )
                 results.append(RelationshipContext(
-                    source, target, "functional_dependency", coverage,
+                    source, target,
+                    "functional_dependency" if not violations and not missing_pairs else "approximate_mapping",
+                    coverage,
                     confidence,
-                    (Evidence("value_mapping", f"{coverage:.1%} of observed {source} values map to one {target} value", {"source_distinct": int(source_values), "target_distinct": int(target_values), "coverage": coverage}),),
+                    (Evidence("value_mapping", f"{coverage:.1%} of observed {source} values map to one {target} value", {"source_distinct": int(source_values), "target_distinct": int(target_values), "coverage": coverage, "violation_count": violations, "affected_groups": affected_groups, "paired_row_count": paired_rows, "missing_pair_count": missing_pairs}),),
                     confidence_components=components,
+                    violation_count=violations,
+                    affected_groups=affected_groups,
+                    paired_row_count=paired_rows,
+                    missing_pair_count=missing_pairs,
                 ))
     dependency_edges = {
         (relation.source_column, relation.target_column): relation
@@ -372,13 +386,17 @@ def detect_relationships(
     single_keys = [
         key.columns[0] for key in candidate_keys
         if key.kind == "single" and len(key.columns) == 1
+        and key.duplicate_count == 0
         and (
             roles.get(key.columns[0]) == "identifier"
             or (grain is not None and key.columns[0] in grain.columns)
         )
     ]
-    eligible_groups = sorted(roles, key=rank)[:max_relationship_columns]
-    for entity in sorted(single_keys)[:max_relationship_columns]:
+    eligible_groups = sorted(
+        (name for name, role in roles.items() if role in {"identifier", "dimension", "categorical", "boolean"}),
+        key=lambda name: (roles[name] != "identifier", rank(name)),
+    )[:search_columns]
+    for entity in sorted(single_keys)[:search_columns]:
         entity_count = _nunique(frame[entity])
         if entity_count < 2:
             continue
@@ -396,12 +414,14 @@ def detect_relationships(
                 continue
             entity_group_counts = pairs.groupby(entity, dropna=True)[group].nunique()
             coverage = float(entity_group_counts.eq(1).sum() / entity_count)
-            if coverage < .98:
+            if coverage < 1.0:
                 continue
             per_group = pairs.groupby(group, dropna=True)[entity].nunique()
             if per_group.empty or int(per_group.max()) <= 1:
                 continue
             group_reuse = max(0.0, (entity_count - group_count) / entity_count)
+            paired_rows = int(frame[[group, entity]].notna().all(axis=1).sum())
+            missing_pairs = len(frame) - paired_rows
             confidence, components = _score(
                 {"mapping_coverage": coverage, "group_reuse": group_reuse,
                  "generalization": _generalization_support(entity_count)},
@@ -425,9 +445,13 @@ def detect_relationships(
                         "minimum_entities_per_group": int(per_group.min()),
                         "maximum_entities_per_group": int(per_group.max()),
                         "coverage": coverage,
+                        "paired_row_count": paired_rows,
+                        "missing_pair_count": missing_pairs,
                     },
                 ),),
                 confidence_components=components,
+                paired_row_count=paired_rows,
+                missing_pair_count=missing_pairs,
             ))
 
     # Keep a deterministic orientation for two-way functional dependencies.
@@ -452,4 +476,9 @@ def detect_relationships(
         current = deduped.get(key)
         if current is None or relation.coverage > current.coverage:
             deduped[key] = relation
-    return tuple(sorted(deduped.values(), key=lambda r: (r.source_column, r.target_column, r.kind)))
+    priority = {"one_to_many": 0, "one_to_one": 1, "functional_dependency": 2, "approximate_mapping": 3}
+    ranked = sorted(
+        deduped.values(),
+        key=lambda r: (priority.get(r.kind, 4), -r.coverage, -r.confidence, r.source_column, r.target_column),
+    )[:max_relationships]
+    return tuple(sorted(ranked, key=lambda r: (r.source_column, r.target_column, r.kind)))

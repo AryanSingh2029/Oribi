@@ -101,6 +101,13 @@ def _relationship_lines(context: Any) -> list[str]:
             )
         else:
             evidence = relation.evidence[0].statement if relation.evidence else "observed value mapping"
+            if relation.kind == "approximate_mapping":
+                lines.append(
+                    f"- {relation.source_column} → {relation.target_column}: approximate mapping only "
+                    f"({relation.affected_groups} conflicting groups; {relation.violation_count} violations; "
+                    f"{relation.missing_pair_count} incomplete rows; {relation.coverage:.0%} group coverage)"
+                )
+                continue
             lines.append(
                 f"- {relation.source_column} → {relation.target_column}: observed functional dependency "
                 f"({evidence}; {relation.coverage:.0%} coverage; {relation.confidence:.0%} confidence)"
@@ -163,13 +170,21 @@ def _format_range_value(value: Any) -> str:
     return str(value)
 
 
-def to_context(context: Any, *, max_chars: int = 8000) -> str:
+def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = False) -> str:
     if max_chars < 100:
         raise ValueError("max_chars must be at least 100")
     p = context.profile
     header = ["DATASET", f"{p.row_count:,} rows \u00d7 {p.column_count:,} columns"]
     if p.duplicate_row_count:
         header.append(f"Duplicate rows: {p.duplicate_row_count:,}")
+    header.append("Confidence percentages are heuristic scores, not probabilities.")
+    if p.index is not None:
+        labels = ", ".join(name if name is not None else f"level {i}" for i, name in enumerate(p.index.names))
+        header.append(
+            f"Index ({labels}): {p.index.unique_count:,} unique / {p.row_count:,} rows; "
+            f"{p.index.duplicate_count:,} duplicates; {p.index.missing_count:,} rows with null index values. "
+            "Use the DataFrame index or reset_index() to access these fields."
+        )
 
     grain_lines = ["GRAIN"]
     if context.grain and context.grain.status == "estimated":
@@ -215,10 +230,12 @@ def to_context(context: Any, *, max_chars: int = 8000) -> str:
             f"{col.dtype} \u00b7 {col.semantic.role} \u00b7 {col.semantic.confidence:.0%} confidence",
         ]
         stats = f"Missing {s.missing_rate:.0%} \u00b7 Unique {s.distinct_count:,}"
-        if s.minimum is not None or s.maximum is not None:
+        if include_values and (s.minimum is not None or s.maximum is not None):
             stats += f" \u00b7 Range {_format_range_value(s.minimum)} \u2192 {_format_range_value(s.maximum)}"
         fields.append(stats)
         fields.append(f"Aggregations: {_format_aggregations(aggregations)}")
+        if include_values and s.top_values:
+            fields.append("Local value samples: " + ", ".join(f"{v} ({n})" for v, n in s.top_values))
         column_lines.extend(fields)
 
     sections = [header, grain_lines]
@@ -238,12 +255,41 @@ def to_context(context: Any, *, max_chars: int = 8000) -> str:
     result = "\n".join(lines)
     if len(result) <= max_chars:
         return result
+    # Reserve the limited budget for a usable schema and warnings before
+    # optional relationship prose. Every dropped section is acknowledged.
+    essentials = header + ["", *grain_lines, "", "COLUMNS"]
+    if len(ranked) >= 100:
+        essentials += [
+            f"- {col.name}: {col.dtype}/{col.semantic.role}"
+            + (f"; {col.statistics.missing_rate:.0%} missing" if col.statistics.missing_count else "")
+            for col in ranked
+        ]
+    else:
+        essentials += [f"- {col.name}: {col.dtype}, {col.semantic.role}; {col.statistics.missing_rate:.0%} missing" for col in ranked]
+    if warning_lines:
+        severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        distinct_warnings = {(warning.code, warning.message): warning for warning in all_warnings}
+        prioritized = sorted(
+            distinct_warnings.values(),
+            key=lambda warning: (severity_rank.get(warning.severity, 4), warning.code, warning.message),
+        )
+        selected_warnings = prioritized[:10]
+        essentials += ["", "WARNINGS", *(f"⚠ {warning.message}" for warning in selected_warnings)]
+        if len(prioritized) > len(selected_warnings):
+            essentials.append(f"{len(prioritized) - len(selected_warnings)} additional warnings omitted; inspect the full report.")
     marker = "[Context truncated.]"
-    selected: list[str] = []
-    for line in lines:
-        candidate = "\n".join((*selected, line, marker))
-        if len(candidate) <= max_chars:
-            selected.append(line)
-    if not selected:
-        return marker[:max_chars]
-    return "\n".join((*selected, marker))
+    kept: list[str] = []
+    omitted = 0
+    for line in essentials:
+        if len("\n".join((*kept, line, marker))) <= max_chars:
+            kept.append(line)
+        else:
+            omitted += 1
+    if not omitted:
+        extras = ["", *(_relationship_lines(context)[:10]), "", *(_cardinality_lines(context)[:10])]
+        for line in extras:
+            if len("\n".join((*kept, line, marker))) <= max_chars:
+                kept.append(line)
+            else:
+                omitted += 1
+    return "\n".join((*kept, marker))[:max_chars]

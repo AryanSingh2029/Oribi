@@ -38,6 +38,7 @@ def profile_column(obs: ColumnObservation, row_count: int, top_k: int, include_q
         try:
             counts = non_null.value_counts(dropna=True).head(top_k)
             values["top_values"] = tuple((k, int(v)) for k, v in counts.items())
+            values["top_frequencies"] = tuple(int(v) for v in counts.values)
         except (TypeError, ValueError):
             pass
     return StatisticsContext(
