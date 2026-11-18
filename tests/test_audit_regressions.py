@@ -185,6 +185,35 @@ def test_named_and_multiindex_are_exported_as_index_metadata():
 
 
 @pytest.mark.parametrize(
+    ("values", "unique", "duplicates", "missing", "is_unique"),
+    [
+        ([10, 11, None], 2, 0, 1, True),
+        ([10, 10, None], 1, 1, 1, False),
+        ([None, None], 0, 1, 2, False),
+        ([10, 11, 12], 3, 0, 0, True),
+        (["a", None, "a", None], 1, 2, 2, False),
+    ],
+)
+def test_single_index_missing_values_are_not_duplicates(values, unique, duplicates, missing, is_unique):
+    index = pd.Index(values, name="record_id")
+    profile = inspect(pd.DataFrame({"value": range(len(values))}, index=index)).profile.index
+    assert profile.unique_count == unique
+    assert profile.duplicate_count == duplicates
+    assert profile.duplicate_count == int(index.duplicated().sum())
+    assert profile.missing_count == missing
+    assert profile.is_unique is is_unique
+    assert profile.is_unique == index.is_unique
+
+
+def test_multiindex_missing_values_are_counted_like_pandas():
+    multi = pd.MultiIndex.from_tuples([("A", None), ("A", None), ("B", 1)], names=["group", "period"])
+    profile = inspect(pd.DataFrame({"value": [1.0, 2.0, 3.0]}, index=multi)).profile.index
+    assert profile.duplicate_count == 1
+    assert profile.missing_count == 2
+    assert profile.is_unique is False
+
+
+@pytest.mark.parametrize(
     ("index", "label"),
     [
         (pd.Index([10, 11], name=42), "42"),
