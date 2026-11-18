@@ -36,7 +36,8 @@ def profile_column(obs: ColumnObservation, row_count: int, top_k: int, include_q
         values["date_range"] = f"{values['minimum']} to {values['maximum']}"
     if len(non_null) and (obs.logical_type in {"text", "categorical", "boolean", "unknown"} or obs.distinct_count <= top_k * 4):
         try:
-            counts = non_null.value_counts(dropna=True).head(top_k)
+            counts = non_null.value_counts(dropna=True)
+            counts = counts[counts > 0].head(top_k)
             values["top_values"] = tuple((k, int(v)) for k, v in counts.items())
             values["top_frequencies"] = tuple(int(v) for v in counts.values)
         except (TypeError, ValueError):

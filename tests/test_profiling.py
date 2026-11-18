@@ -102,6 +102,13 @@ def test_high_cardinality_categorical_column_has_warning():
     assert any(w.code == "high_cardinality_category" for w in group.warnings)
 
 
+def test_unused_categories_are_excluded_from_top_values():
+    frame = pd.DataFrame({"category": pd.Series(["a"], dtype=pd.CategoricalDtype(categories=["a", "b", "c"]))})
+    column = next(c for c in inspect(frame).columns if c.name == "category")
+    assert column.statistics.top_values == (("a", 1),)
+    assert column.statistics.top_frequencies == (1,)
+
+
 def test_temporal_gap_warning_is_serialized():
     context, _, warnings = _temporal_warnings(["2026-01-01", "2026-01-02", "2026-01-04", "2026-01-05"])
     assert warnings[0] in context.warnings
