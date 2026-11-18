@@ -125,7 +125,12 @@ def to_markdown(context: Any, *, include_values: bool = False) -> str:
         ]
         lines.append(f"- Recommended aggregations: {', '.join(aggregations) if aggregations else 'None'}")
         if col.warnings:
-            lines.extend(f"- Warning [{warning.severity}]: {warning.message}" for warning in col.warnings)
+            # The message, implication and suggestion are printed once, under
+            # "Analytical warnings"; the column keeps a pointer to each warning.
+            lines.extend(
+                f"- Warning [{warning.severity}]: {warning.title} (see Analytical warnings)"
+                for warning in col.warnings
+            )
         if col.semantic.evidence:
             lines += ["", "<details>", "<summary>Inference evidence</summary>", ""]
             lines.extend(f"- {e.statement}" for e in col.semantic.evidence)
