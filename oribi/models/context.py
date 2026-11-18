@@ -28,23 +28,23 @@ class DatasetContext:
     grain: GrainContext | None = None
     relationships: tuple[RelationshipContext, ...] = ()
     warnings: tuple[Warning, ...] = ()
-    schema_version: str = "1"
+    schema_version: str = "2"
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, include_values: bool = False) -> dict[str, Any]:
         from ..serialization.dict import to_dict
-        return to_dict(self)
+        return to_dict(self, include_values=include_values)
 
-    def to_json(self, *, indent: int | None = 2) -> str:
+    def to_json(self, *, indent: int | None = 2, include_values: bool = False) -> str:
         from ..serialization.dict import to_json
-        return to_json(self, indent=indent)
+        return to_json(self, indent=indent, include_values=include_values)
 
-    def to_markdown(self) -> str:
+    def to_markdown(self, *, include_values: bool = False) -> str:
         from ..serialization.markdown import to_markdown
-        return to_markdown(self)
+        return to_markdown(self, include_values=include_values)
 
-    def to_context(self, *, max_chars: int = 8000) -> str:
+    def to_context(self, *, max_chars: int = 8000, include_values: bool = False) -> str:
         from ..serialization.context import to_context
-        return to_context(self, max_chars=max_chars)
+        return to_context(self, max_chars=max_chars, include_values=include_values)
 
     def summary(self) -> str:
         rows = self.profile.row_count

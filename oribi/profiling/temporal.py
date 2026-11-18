@@ -11,7 +11,7 @@ _MIN_CADENCE_INTERVALS = 2
 _MIN_CADENCE_SHARE = 0.6
 
 
-def temporal_gap_warnings(series: pd.Series, column_name: str) -> tuple[Warning, ...]:
+def temporal_gap_warnings(series: pd.Series, column_name: str, *, max_examples: int = 3) -> tuple[Warning, ...]:
     """Report possible gaps only when a dominant fixed cadence is supported."""
     timestamps = pd.DatetimeIndex(series.dropna().drop_duplicates().sort_values())
     if len(timestamps) < _MIN_UNIQUE_TIMESTAMPS:
@@ -41,16 +41,19 @@ def temporal_gap_warnings(series: pd.Series, column_name: str) -> tuple[Warning,
         if not missing_count:
             continue
         before, after = timestamps[index], timestamps[index + 1]
-        expected = [before + cadence * step for step in range(1, steps)]
+        examples = [before + cadence * step for step in range(1, min(steps, max_examples + 1))]
+        gap_start = before + cadence
+        gap_end = after - cadence
         evidence = Evidence(
             "temporal_gap",
             f"{missing_count} timestamp(s) may be absent relative to an inferred {cadence_text} cadence",
             {
                 "cadence": cadence_text,
-                "gap_start": expected[0].isoformat(),
-                "gap_end": expected[-1].isoformat(),
+                "gap_start": gap_start.isoformat(),
+                "gap_end": gap_end.isoformat(),
                 "missing_intervals": missing_count,
-                "expected_timestamps": [value.isoformat() for value in expected],
+                "expected_timestamps": [value.isoformat() for value in examples],
+                "examples_omitted": missing_count - len(examples),
                 "observed_before": before.isoformat(),
                 "observed_after": after.isoformat(),
             },

@@ -20,7 +20,7 @@ def test_context_renderers_use_scannable_hierarchy_and_compact_columns(sales_fra
     assert "Missing " in compact
     assert "Unique " in compact
     assert "Aggregations:" in compact
-    assert "→" in compact
+    assert "→" in context.to_context(include_values=True)
     assert "Evidence:" not in compact
     assert "confidence" in compact
     assert "DATASET SUMMARY" not in compact
@@ -68,9 +68,12 @@ def test_compact_context_formats_date_and_whole_number_ranges():
         "event_date": pd.to_datetime(["2026-01-01", "2026-01-02"]),
         "amount": [85.0, 210.0],
     }))
-    rendered = context.to_context()
+    rendered = context.to_context(include_values=True)
     assert "Range 2026-01-01 → 2026-01-02" in rendered
     assert "Range 85 → 210" in rendered
+    safe_rendered = context.to_context()
+    assert "Range 2026-01-01" not in safe_rendered
+    assert "Range 85" not in safe_rendered
 
 
 def test_result_mappings_cannot_be_mutated_through_the_snapshot(sales_frame):

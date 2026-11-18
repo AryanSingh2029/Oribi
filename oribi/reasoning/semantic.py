@@ -24,16 +24,20 @@ def infer_semantic(
     tokens = set(re.split(r"[^a-z0-9]+", lname))
     explicit_identifier_name = "id" in tokens or lname.endswith("_key")
     code_name = lname.endswith("_code")
+    # A suffix alone cannot establish identity when only a few codes recur.
+    categorical_code_shape = row_count >= 20 and distinct <= 3 and rate <= 0.15
     if explicit_identifier_name and distinct > 1:
-        votes["identifier"] = .88
+        votes["identifier"] = .48 if categorical_code_shape else .78
         evidence.append(Evidence("name_identifier_hint", "Column name strongly suggests an identifier"))
+        if categorical_code_shape:
+            evidence.append(Evidence("few_repeated_codes", "A few values repeat across many rows; entity identity is unestablished", {"distinct_count": distinct, "row_count": row_count}))
         evidence.append(Evidence(
             "identifier_value_variation",
             f"Observed {distinct} distinct non-missing values",
             {"distinct_count": distinct, "row_count": row_count},
         ))
     elif code_name and distinct > 1:
-        votes["identifier"] = .78
+        votes["identifier"] = .48 if categorical_code_shape else .75
         evidence.append(Evidence("name_identifier_hint", "Column name suggests an identifier"))
         evidence.append(Evidence(
             "identifier_value_variation",
@@ -72,8 +76,11 @@ def infer_semantic(
         else:
             votes["dimension"] = .62
             evidence.append(Evidence("text_dimension", "Text values are reusable across rows"))
-    if logical_type == "numeric" and not is_float and distinct <= min(20, max(3, row_count // 10)):
-        votes["dimension"] = max(votes.get("dimension", 0), .64)
+    if logical_type == "numeric" and not is_float and (
+        distinct <= min(20, max(3, row_count // 10))
+        or (row_count >= 20 and rate <= .1)
+    ):
+        votes["dimension"] = max(votes.get("dimension", 0), .72 if row_count >= 20 and rate <= .1 else .64)
         evidence.append(Evidence("low_cardinality_numeric", "Numeric values have low cardinality"))
     if not votes:
         return SemanticContext("unknown", 0.0, tuple(evidence))

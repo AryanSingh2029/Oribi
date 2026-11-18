@@ -42,10 +42,14 @@ def detect_candidate_keys(
             and rate >= _MIN_SINGLE_UNIQUENESS
             and column_stats.missing_rate <= _MAX_SINGLE_MISSING_RATE
         ):
+            duplicate_count = row_count - column_stats.distinct_count - column_stats.missing_count
+            verified = duplicate_count == 0 and column_stats.missing_count == 0
             evidence = Evidence(
                 "single_column_uniqueness",
                 f"{column_stats.distinct_count} distinct values across {row_count} rows",
-                {"distinct_count": column_stats.distinct_count, "row_count": row_count},
+                {"distinct_count": column_stats.distinct_count, "row_count": row_count,
+                 "duplicate_count": duplicate_count, "missing_count": column_stats.missing_count,
+                 "verified_unique": verified},
             )
             single_candidates.append(KeyCandidate(
                 (name,),
@@ -53,6 +57,9 @@ def detect_candidate_keys(
                 round(rate * sample_support, 2),
                 rate,
                 (evidence,),
+                duplicate_count,
+                column_stats.missing_count,
+                verified,
             ))
 
     # A component already qualifying alone adds no useful composite candidate.
@@ -72,11 +79,15 @@ def detect_candidate_keys(
         for pair in combinations(potential, 2):
             columns = tuple(sorted(pair))
             try:
-                distinct_pairs = int(frame[list(columns)].drop_duplicates().shape[0])
+                pair_frame = frame[list(columns)]
+                distinct_pairs = int(pair_frame.drop_duplicates().shape[0])
+                missing_count = int(pair_frame.isna().any(axis=1).sum())
             except (TypeError, ValueError):
                 continue
             rate = distinct_pairs / row_count
             if rate >= _MIN_COMPOSITE_UNIQUENESS:
+                duplicate_count = row_count - distinct_pairs
+                verified = duplicate_count == 0 and missing_count == 0
                 confidence = rate * sample_support
                 evidence = Evidence(
                     "composite_uniqueness",
@@ -85,10 +96,14 @@ def detect_candidate_keys(
                         "distinct_pairs": distinct_pairs,
                         "row_count": row_count,
                         "uniqueness_rate": rate,
+                        "duplicate_count": duplicate_count,
+                        "missing_count": missing_count,
+                        "verified_unique": verified,
                     },
                 )
                 pair_candidates.append(KeyCandidate(
                     columns, "composite", round(confidence, 2), rate, (evidence,),
+                    duplicate_count, missing_count, verified,
                 ))
 
     # Candidate retention does not depend on this ordering. Simpler keys are
@@ -114,6 +129,7 @@ def select_grain(
     roles: dict[str, str] | None = None,
 ) -> GrainContext:
     """Choose one preferred grain from the retained candidates."""
+    candidates = tuple(candidate for candidate in candidates if candidate.verified_unique)
     if not candidates:
         return GrainContext("undetermined", None, (), 0.0, ())
 
@@ -125,20 +141,14 @@ def select_grain(
         candidate for candidate in composites
         if roles and any(roles.get(name) == "temporal" for name in candidate.columns)
     ]
-    # A repeated dimension paired with time often describes observations more
-    # usefully than an unrelated, ambiguous numeric column that happens to be
-    # unique in this sample. Strong single identifier evidence still wins.
-    has_identifier_role = any(
-        roles and roles.get(candidate.columns[0]) == "identifier"
-        for candidate in singles
-    )
-    if temporal_composites and singles and not has_identifier_role:
-        pool = temporal_composites
-    else:
-        pool = singles or composites
+    has_identifier_single = any(roles and roles.get(candidate.columns[0]) == "identifier" for candidate in singles)
+    pool = temporal_composites if temporal_composites and singles and not has_identifier_single else (singles or composites)
+    role_cost = {"identifier": 0, "dimension": 1, "categorical": 1, "temporal": 2,
+                 "boolean": 3, "text": 3, "unknown": 4}
     best = min(
         pool,
         key=lambda candidate: (
+            sum(role_cost.get(roles.get(name), 4) for name in candidate.columns) if roles else 0,
             -candidate.uniqueness_rate,
             -candidate.confidence,
             candidate.columns,
@@ -168,13 +178,13 @@ def detect_keys(
             "undetermined", None, (), 0.0,
             (Evidence("empty_dataset", "No rows are available to estimate a key or grain"),),
         )
-    elif candidates:
+    elif any(candidate.verified_unique for candidate in candidates):
         grain = select_grain(candidates, roles)
         temporal_candidates = [
             name for name in names
             if roles.get(name) == "temporal"
-            and stats[name].distinct_count / row_count >= _MIN_SINGLE_UNIQUENESS
-            and stats[name].missing_rate <= _MAX_SINGLE_MISSING_RATE
+            and stats[name].distinct_count == row_count
+            and stats[name].missing_count == 0
         ]
         if (
             len(grain.columns) == 1
@@ -198,8 +208,8 @@ def detect_keys(
         temporal_candidates = [
             name for name in names
             if roles.get(name) == "temporal"
-            and stats[name].distinct_count / row_count >= _MIN_SINGLE_UNIQUENESS
-            and stats[name].missing_rate <= _MAX_SINGLE_MISSING_RATE
+            and stats[name].distinct_count == row_count
+            and stats[name].missing_count == 0
         ]
         if temporal_candidates:
             name = max(temporal_candidates, key=lambda item: (stats[item].distinct_rate, item))
@@ -217,19 +227,20 @@ def detect_keys(
                 ),),
             )
         else:
-            grain = _undetermined_grain(frame, max_exact_rows)
+            grain = _undetermined_grain(frame, max_exact_rows, bool(candidates))
     else:
-        grain = _undetermined_grain(frame, max_exact_rows)
+        grain = _undetermined_grain(frame, max_exact_rows, bool(candidates))
     return candidates, grain
 
 
-def _undetermined_grain(frame: pd.DataFrame, max_exact_rows: int) -> GrainContext:
+def _undetermined_grain(frame: pd.DataFrame, max_exact_rows: int, approximate: bool = False) -> GrainContext:
     row_count = len(frame)
-    code = "key_search_bounded" if row_count > max_exact_rows else "no_strong_key"
+    code = "key_search_bounded" if row_count > max_exact_rows else ("approximate_keys_only" if approximate else "no_strong_key")
     message = (
         "Composite key search was skipped because the DataFrame exceeds max_exact_rows"
         if row_count > max_exact_rows
-        else "No single column or tested column pair was sufficiently unique"
+        else ("Near-unique candidates have observed collisions or missing values" if approximate
+              else "No single column or tested column pair was sufficiently unique")
     )
     return GrainContext(
         "undetermined", None, (), 0.0,

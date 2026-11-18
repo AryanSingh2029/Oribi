@@ -7,7 +7,7 @@ import pandas as pd
 from .exceptions import InvalidInputError
 from .models.context import ColumnContext, DatasetContext
 from .models.evidence import Warning
-from .models.profile import DatasetProfile
+from .models.profile import DatasetProfile, IndexContext
 from .profiling.columns import profile_column
 from .profiling.cardinality import profile_cardinality
 from .profiling.observations import AnalysisSession
@@ -26,12 +26,32 @@ class ProfileOptions:
     include_quantiles: bool = True
     max_exact_rows: int = 100_000
     max_key_columns: int = 8
+    max_relationships: int = 40
+    max_relationship_columns: int = 40
+    max_gap_examples: int = 3
 
     def __post_init__(self) -> None:
         if self.top_k < 1:
             raise ValueError("top_k must be at least 1")
         if self.max_exact_rows < 1 or self.max_key_columns < 2:
             raise ValueError("max_exact_rows must be positive and max_key_columns at least 2")
+        if self.max_relationships < 0 or self.max_relationship_columns < 0 or self.max_gap_examples < 0:
+            raise ValueError("relationship and gap limits must be non-negative")
+
+
+def _profile_index(df: pd.DataFrame) -> IndexContext | None:
+    index = df.index
+    default = isinstance(index, pd.RangeIndex) and index.name is None and index.start == 0 and index.step == 1
+    if default:
+        return None
+    names = tuple(index.names)
+    dtypes = tuple(str(index.get_level_values(i).dtype) for i in range(index.nlevels))
+    missing = int(index.to_frame(index=False).isna().any(axis=1).sum())
+    try:
+        unique = int(index.nunique()) if index.nlevels == 1 else int(len(index.unique()))
+    except (TypeError, ValueError):
+        unique = int(len(index.drop_duplicates()))
+    return IndexContext(names, dtypes, index.nlevels, unique, len(index) - unique, missing, bool(index.is_unique))
 
 
 def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> DatasetContext:
@@ -78,6 +98,8 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
         max_rows=options.max_exact_rows,
         candidate_keys=key_candidates,
         grain=grain,
+        max_relationships=options.max_relationships,
+        max_relationship_columns=options.max_relationship_columns,
     )
     column_relationships = infer_column_relationships(
         cardinalities,
@@ -92,7 +114,7 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
         obs = observations[name]
         recommendations, warnings = reason_column(name, obs.logical_type, semantics[name], stats[name])
         if obs.logical_type == "temporal":
-            warnings += temporal_gap_warnings(obs.series, name)
+            warnings += temporal_gap_warnings(obs.series, name, max_examples=options.max_gap_examples)
         columns.append(ColumnContext(
             name,
             str(obs.series.dtype),
@@ -113,7 +135,7 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
             "Pandas could not compare rows with the available cell values.",
         ))
     return DatasetContext(
-        profile=DatasetProfile(nrows, ncols, duplicates, duplicate_rate),
+        profile=DatasetProfile(nrows, ncols, duplicates, duplicate_rate, _profile_index(df)),
         columns=tuple(columns),
         candidate_keys=key_candidates,
         grain=grain,

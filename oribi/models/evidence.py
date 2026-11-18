@@ -59,6 +59,9 @@ class KeyCandidate:
     confidence: float
     uniqueness_rate: float
     evidence: tuple[Evidence, ...] = ()
+    duplicate_count: int = 0
+    missing_count: int = 0
+    verified_unique: bool = False
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,10 @@ class RelationshipContext:
     evidence: tuple[Evidence, ...] = ()
     semantic_confidence: float | None = None
     confidence_components: Mapping[str, float] = field(default_factory=dict)
+    violation_count: int = 0
+    affected_groups: int = 0
+    paired_row_count: int = 0
+    missing_pair_count: int = 0
 
     def __post_init__(self) -> None:
         if self.semantic_confidence is None:
