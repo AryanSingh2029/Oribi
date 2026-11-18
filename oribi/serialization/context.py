@@ -179,7 +179,7 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
         header.append(f"Duplicate rows: {p.duplicate_row_count:,}")
     header.append("Confidence percentages are heuristic scores, not probabilities.")
     if p.index is not None:
-        labels = ", ".join(name if name is not None else f"level {i}" for i, name in enumerate(p.index.names))
+        labels = ", ".join(str(name) if name is not None else f"level {i}" for i, name in enumerate(p.index.names))
         header.append(
             f"Index ({labels}): {p.index.unique_count:,} unique / {p.row_count:,} rows; "
             f"{p.index.duplicate_count:,} duplicates; {p.index.missing_count:,} rows with null index values. "

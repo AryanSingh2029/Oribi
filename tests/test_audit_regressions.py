@@ -182,3 +182,17 @@ def test_named_and_multiindex_are_exported_as_index_metadata():
     assert result.to_dict()["profile"]["index"]["names"] == ["group", "period"]
     default = inspect(pd.DataFrame({"value": [1.0, 2.0]}))
     assert default.profile.index is None
+
+
+@pytest.mark.parametrize(
+    ("index", "label"),
+    [
+        (pd.Index([10, 11], name=42), "42"),
+        (pd.MultiIndex.from_tuples([("A", 1), ("B", 2)], names=[0, None]), "0, level 1"),
+    ],
+)
+@pytest.mark.parametrize("renderer", ["to_markdown", "to_context"])
+def test_renderers_display_non_string_index_names(index, label, renderer):
+    context = inspect(pd.DataFrame({"amount": [1.0, 2.0]}, index=index))
+    assert f"({label})" in getattr(context, renderer)()
+    assert context.profile.index.names == tuple(index.names)
