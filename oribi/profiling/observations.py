@@ -40,6 +40,8 @@ class AnalysisSession:
         if name in self.observations:
             return self.observations[name]
         series = self.frame[name]
+        if pd.api.types.is_complex_dtype(series.dtype):
+            raise InvalidInputError(f"Complex-valued column {name!r} is not supported")
         missing = int(series.isna().sum())
         try:
             distinct = int(series.nunique(dropna=True))

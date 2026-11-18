@@ -1,6 +1,7 @@
 """Conservative temporal cadence and gap observations."""
 
 from collections import Counter
+from dataclasses import replace
 
 import pandas as pd
 
@@ -11,7 +12,8 @@ _MIN_CADENCE_INTERVALS = 2
 _MIN_CADENCE_SHARE = 0.6
 
 
-def temporal_gap_warnings(series: pd.Series, column_name: str, *, max_examples: int = 3) -> tuple[Warning, ...]:
+def temporal_gap_warnings(series: pd.Series, column_name: str, *, max_examples: int = 3,
+                          max_warnings: int = 10) -> tuple[Warning, ...]:
     """Report possible gaps only when a dominant fixed cadence is supported."""
     timestamps = pd.DatetimeIndex(series.dropna().drop_duplicates().sort_values())
     if len(timestamps) < _MIN_UNIQUE_TIMESTAMPS:
@@ -36,9 +38,13 @@ def temporal_gap_warnings(series: pd.Series, column_name: str, *, max_examples: 
 
     cadence_text = _format_timedelta(cadence)
     warnings: list[Warning] = []
+    gap_count = 0
     for index, steps in enumerate(steps_by_interval):
         missing_count = steps - 1
         if not missing_count:
+            continue
+        gap_count += 1
+        if gap_count > max_warnings:
             continue
         before, after = timestamps[index], timestamps[index + 1]
         examples = [before + cadence * step for step in range(1, min(steps, max_examples + 1))]
@@ -65,6 +71,15 @@ def temporal_gap_warnings(series: pd.Series, column_name: str, *, max_examples: 
             "The interval may reflect missing observations or a normal pause in data collection.",
             "Confirm the expected sampling schedule before treating the interval as missing data.",
         ))
+    if gap_count > max_warnings and warnings:
+        last = warnings[-1]
+        evidence = last.evidence[0]
+        omitted = gap_count - max_warnings
+        warnings[-1] = replace(
+            last,
+            message=f"{last.message} {omitted} additional gap(s) omitted.",
+            evidence=(replace(evidence, details={**evidence.details, "gaps_omitted": omitted}),),
+        )
     return tuple(warnings)
 
 
