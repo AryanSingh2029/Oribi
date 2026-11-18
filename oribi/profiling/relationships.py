@@ -386,7 +386,7 @@ def detect_relationships(
     single_keys = [
         key.columns[0] for key in candidate_keys
         if key.kind == "single" and len(key.columns) == 1
-        and key.duplicate_count == 0
+        and key.verified_unique
         and (
             roles.get(key.columns[0]) == "identifier"
             or (grain is not None and key.columns[0] in grain.columns)

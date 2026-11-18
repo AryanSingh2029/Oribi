@@ -1,6 +1,7 @@
 """Public inspection API and pipeline orchestration."""
 
 from dataclasses import dataclass
+from numbers import Integral
 
 import pandas as pd
 
@@ -29,14 +30,21 @@ class ProfileOptions:
     max_relationships: int = 40
     max_relationship_columns: int = 40
     max_gap_examples: int = 3
+    max_gap_warnings: int = 10
 
     def __post_init__(self) -> None:
-        if self.top_k < 1:
-            raise ValueError("top_k must be at least 1")
-        if self.max_exact_rows < 1 or self.max_key_columns < 2:
-            raise ValueError("max_exact_rows must be positive and max_key_columns at least 2")
-        if self.max_relationships < 0 or self.max_relationship_columns < 0 or self.max_gap_examples < 0:
-            raise ValueError("relationship and gap limits must be non-negative")
+        if type(self.include_quantiles) is not bool:
+            raise ValueError("include_quantiles must be a boolean")
+        for name in ("top_k", "max_exact_rows", "max_key_columns", "max_relationships",
+                     "max_relationship_columns", "max_gap_examples", "max_gap_warnings"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, Integral):
+                raise ValueError(f"{name} must be an integer")
+        for name, minimum in (("top_k", 1), ("max_exact_rows", 1), ("max_key_columns", 2),
+                              ("max_relationships", 0), ("max_relationship_columns", 0),
+                              ("max_gap_examples", 0), ("max_gap_warnings", 1)):
+            if getattr(self, name) < minimum:
+                raise ValueError(f"{name} must be at least {minimum}")
 
 
 def _profile_index(df: pd.DataFrame) -> IndexContext | None:
@@ -112,9 +120,10 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
     columns = []
     for name in names:
         obs = observations[name]
-        recommendations, warnings = reason_column(name, obs.logical_type, semantics[name], stats[name])
+        recommendations, warnings = reason_column(name, obs.logical_type, semantics[name], stats[name], nrows)
         if obs.logical_type == "temporal":
-            warnings += temporal_gap_warnings(obs.series, name, max_examples=options.max_gap_examples)
+            warnings += temporal_gap_warnings(obs.series, name, max_examples=options.max_gap_examples,
+                                              max_warnings=options.max_gap_warnings)
         columns.append(ColumnContext(
             name,
             str(obs.series.dtype),

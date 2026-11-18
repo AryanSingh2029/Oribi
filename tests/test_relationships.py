@@ -110,16 +110,28 @@ def test_bijective_value_mapping_can_show_one_to_one_with_uncertainty():
     assert len([rel for rel in context.relationships if rel.kind == "one_to_one"]) == 1
 
 
-def test_missing_entity_values_are_excluded_from_mapping_coverage():
+def test_missing_entity_value_cannot_establish_exact_one_to_many():
     frame = pd.DataFrame({
         "customer_id": [f"c{i // 4}" for i in range(100)],
         "order_id": [None if i == 99 else f"o{i}" for i in range(100)],
     })
     context = inspect(frame)
-    relation = next(rel for rel in context.relationships if rel.kind == "one_to_many")
-    assert relation.coverage == 1.0
-    assert relation.evidence[0].details["entity_distinct"] == 99
+    key = next(key for key in context.candidate_keys if key.columns == ("order_id",))
+    assert not key.verified_unique
+    assert not any(rel.kind == "one_to_many" and rel.target_column == "order_id" for rel in context.relationships)
     assert _column(context, "order_id").cardinality.observed_count == 99
+
+
+def test_complete_entity_key_establishes_exact_one_to_many():
+    frame = pd.DataFrame({
+        "customer_id": [f"c{i // 4}" for i in range(100)],
+        "order_id": [f"o{i}" for i in range(100)],
+    })
+    context = inspect(frame)
+    key = next(key for key in context.candidate_keys if key.columns == ("order_id",))
+    assert key.verified_unique
+    assert any(rel.kind == "one_to_many" and rel.source_column == "customer_id"
+               and rel.target_column == "order_id" for rel in context.relationships)
 
 
 def test_unique_id_names_do_not_create_foreign_key_claims_without_group_evidence():

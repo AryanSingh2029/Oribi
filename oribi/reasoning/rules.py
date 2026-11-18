@@ -3,14 +3,14 @@
 from ..models.evidence import Evidence, Recommendation, Warning
 
 
-def reason_column(name: str, logical_type: str, semantic: object, stats: object) -> tuple[tuple[Recommendation, ...], tuple[Warning, ...]]:
+def reason_column(name: str, logical_type: str, semantic: object, stats: object, row_count: int) -> tuple[tuple[Recommendation, ...], tuple[Warning, ...]]:
     recommendations: list[Recommendation] = []
     warnings: list[Warning] = []
     if stats.missing_rate >= .2:
         warnings.append(Warning("high_missingness", "medium", "High missingness", f"{name} is missing {stats.missing_rate:.1%} of its values.", (Evidence("missing_rate", f"{stats.missing_count} of values are missing", {"missing_count": stats.missing_count, "missing_rate": stats.missing_rate}),), "Analyses using this column may exclude many rows.", "Check whether missing values have a meaningful interpretation."))
     if semantic.role == "identifier":
         recommendations.append(Recommendation("COUNT DISTINCT", "recommended", "Distinct counting is more appropriate for counting entities than summing identifier values.", semantic.evidence))
-        if stats.distinct_rate < .98:
+        if stats.distinct_count < row_count - stats.missing_count:
             warnings.append(Warning("non_unique_identifier", "medium", "Identifier-like column is not unique", f"{name} has {stats.distinct_count} distinct values across rows and may identify repeated entities.", semantic.evidence, "Row counts may exceed entity counts.", "Use a distinct count when counting these entities."))
     if semantic.role == "measure":
         for op, disposition in (("SUM", "recommended"), ("MEAN", "recommended"), ("MEDIAN", "useful"), ("MIN", "valid"), ("MAX", "valid")):

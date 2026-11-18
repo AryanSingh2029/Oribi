@@ -1,6 +1,6 @@
 import pandas as pd
 
-from oribi import inspect
+from oribi import ProfileOptions, inspect
 
 
 def test_numeric_and_temporal_profile(sales_frame):
@@ -114,3 +114,23 @@ def test_temporal_gap_warning_is_serialized():
     assert warnings[0] in context.warnings
     serialized = context.to_dict()
     assert any(warning["code"] == "potential_temporal_gap" for warning in serialized["warnings"])
+
+
+def test_many_temporal_gaps_are_bounded_and_omissions_reported():
+    dates = pd.date_range("2026-01-01", periods=400, freq="D")
+    frame = pd.DataFrame({"event_time": dates[[i for i in range(400) if i % 4 != 3]]})
+    context = inspect(frame, options=ProfileOptions(max_gap_warnings=3))
+    warnings = [w for w in context.columns[0].warnings if w.code == "potential_temporal_gap"]
+    assert len(warnings) == 3
+    assert warnings[-1].evidence[0].details["gaps_omitted"] == 96
+    assert "96 additional gap(s) omitted" in warnings[-1].message
+    assert len([w for w in context.warnings if w.code == "potential_temporal_gap"]) == 3
+
+
+def test_small_number_of_temporal_gaps_keeps_detailed_output():
+    dates = pd.date_range("2026-01-01", periods=12, freq="D")
+    frame = pd.DataFrame({"event_time": dates[[i for i in range(12) if i not in (3, 7)]]})
+    warnings = [w for w in inspect(frame).columns[0].warnings if w.code == "potential_temporal_gap"]
+    assert len(warnings) == 2
+    assert all("gaps_omitted" not in w.evidence[0].details for w in warnings)
+    assert all(len(w.evidence[0].details["expected_timestamps"]) == 1 for w in warnings)
