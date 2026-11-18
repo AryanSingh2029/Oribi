@@ -59,7 +59,15 @@ def _profile_index(df: pd.DataFrame) -> IndexContext | None:
         unique = int(index.nunique()) if index.nlevels == 1 else int(len(index.unique()))
     except (TypeError, ValueError):
         unique = int(len(index.drop_duplicates()))
-    return IndexContext(names, dtypes, index.nlevels, unique, len(index) - unique, missing, bool(index.is_unique))
+    # unique_count leaves missing entries out for a single-level index, so
+    # len(index) - unique would count each missing entry as a duplicate.
+    # index.duplicated() treats repeated missing entries as equal, the same
+    # rule pandas uses for is_unique.
+    try:
+        duplicates = int(index.duplicated().sum())
+    except (TypeError, ValueError):
+        duplicates = len(index) - unique
+    return IndexContext(names, dtypes, index.nlevels, unique, duplicates, missing, bool(index.is_unique))
 
 
 def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> DatasetContext:
