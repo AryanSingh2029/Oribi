@@ -209,3 +209,34 @@ def test_markdown_renders_column_names_as_literal_text():
     # Underscores inside a word are left readable.
     assert "### order_id" in markdown
     assert r"order\_id" not in markdown
+
+def test_compact_context_preserves_timezone_offset_on_midnight_ranges():
+    """Timezone-aware midnight bounds keep time and offset; naive still date-only."""
+    import pandas as pd
+    from datetime import datetime, timezone, timedelta
+
+    offset = timezone(timedelta(hours=5, minutes=30))  # +05:30
+    aware = [
+        datetime(2026, 1, 1, 0, 0, tzinfo=offset),
+        datetime(2026, 1, 2, 0, 0, tzinfo=offset),
+        datetime(2026, 1, 3, 0, 0, tzinfo=offset),
+    ]
+    naive = [
+        datetime(2026, 1, 1, 0, 0),
+        datetime(2026, 1, 2, 0, 0),
+        datetime(2026, 1, 3, 0, 0),
+    ]
+
+    aware_df = pd.DataFrame({"event": aware})
+    naive_df = pd.DataFrame({"event": naive})
+
+    aware_rendered = inspect(aware_df).to_context(include_values=True)
+    naive_rendered = inspect(naive_df).to_context(include_values=True)
+
+    # Aware midnight range must retain times and offsets
+    assert "Range 2026-01-01 00:00:00+05:30 → 2026-01-03 00:00:00+05:30" in aware_rendered
+    # Naive midnight still uses date-only
+    assert "Range 2026-01-01 → 2026-01-03" in naive_rendered
+    # Default compact output omits exact range
+    assert "Range 2026-01-01" not in inspect(aware_df).to_context()
+    assert "Range 2026-01-01" not in inspect(naive_df).to_context()

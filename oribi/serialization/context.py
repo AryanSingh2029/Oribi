@@ -153,9 +153,16 @@ def _cardinality_lines(context: Any) -> list[str]:
 
 
 def _format_range_value(value: Any) -> str:
-    """Render observed bounds without redundant midnight or decimal suffixes."""
+    """Render observed bounds without redundant midnight or decimal suffixes.
+
+    Timezone-aware midnight datetimes keep their time and offset so the
+    actual instant remains unambiguous. Naive midnight values still use
+    the date-only form.
+    """
     if isinstance(value, datetime):
-        if value.time().replace(tzinfo=None).isoformat() == "00:00:00":
+        # Only collapse midnight to date for naive datetimes.
+        # Timezone-aware values must preserve the offset.
+        if value.tzinfo is None and value.time().isoformat() == "00:00:00":
             return value.date().isoformat()
         return str(value)
     if isinstance(value, date):
