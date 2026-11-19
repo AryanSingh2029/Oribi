@@ -221,6 +221,9 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
             message = f"\u26a0 {warning.message}"
         key = (warning.code, message)
         if key not in seen_warnings:
+            if warning.evidence:
+                basis = " ".join(warning.evidence[0].statement.split())
+                message += f" · {basis}"
             warning_lines.append(message)
             seen_warnings.add(key)
     column_lines = ["COLUMNS"]
@@ -228,7 +231,7 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
     for col in ranked:
         s = col.statistics
         aggregations = [
-            rec.operation for rec in col.recommendations
+            rec for rec in col.recommendations
             if rec.disposition in {"recommended", "caution"}
         ]
         fields = [
@@ -240,7 +243,13 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
         if include_values and (s.minimum is not None or s.maximum is not None):
             stats += f" \u00b7 Range {_format_range_value(s.minimum)} \u2192 {_format_range_value(s.maximum)}"
         fields.append(stats)
-        fields.append(f"Aggregations: {_format_aggregations(aggregations)}")
+        fields.append(f"Aggregations: {_format_aggregations(rec.operation for rec in aggregations)}")
+        basis = list(dict.fromkeys(
+            " ".join(evidence.statement.split())
+            for rec in aggregations for evidence in rec.evidence
+        ))
+        if basis:
+            fields.append(f"Aggregation basis: {' · '.join(basis[:2])}")
         if include_values and s.top_values:
             fields.append("Local value samples: " + ", ".join(f"{v} ({n})" for v, n in s.top_values))
         column_lines.extend(fields)

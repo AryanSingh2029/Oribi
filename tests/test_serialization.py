@@ -46,6 +46,32 @@ def test_compact_context_formats_column_warnings_concisely():
     assert "[medium]" not in rendered
 
 
+def test_text_renderers_surface_warning_and_aggregation_evidence(sales_frame):
+    context = inspect(sales_frame)
+    before = context.to_dict()
+    warning = next(w for w in context.warnings if w.code == "negative_measure_values")
+    warning_basis = warning.evidence[0].statement
+    revenue = next(column for column in context.columns if column.name == "revenue")
+    recommendation_basis = revenue.recommendations[0].evidence[0].statement
+
+    markdown = context.to_markdown()
+    assert f"Basis: {warning_basis}" in markdown
+    assert markdown.count(warning_basis) == 1
+
+    compact = context.to_context()
+    assert compact.count(warning_basis) == 1
+    revenue_section = compact.split("\nrevenue\n", 1)[1]
+    assert "Aggregations: SUM · MEAN" in revenue_section
+    assert "Aggregation basis: " + recommendation_basis in revenue_section
+    assert revenue_section.count(recommendation_basis) == 1
+
+    truncated = context.to_context(max_chars=700)
+    assert len(truncated) <= 700
+    assert "[Context truncated.]" in truncated
+    assert warning.message in truncated
+    assert context.to_dict() == before
+
+
 def test_aggregation_formatter_preserves_names_as_complete_values():
     assert _format_aggregations(["COUNT DISTINCT"]) == "COUNT DISTINCT"
     assert _format_aggregations(["SUM", "MEAN"]) == "SUM · MEAN"
