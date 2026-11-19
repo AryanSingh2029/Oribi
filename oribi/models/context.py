@@ -39,10 +39,12 @@ class DatasetContext:
         return to_json(self, indent=indent, include_values=include_values)
 
     def to_markdown(self, *, include_values: bool = False) -> str:
+        """Render a report with evidence for inferences and warnings."""
         from ..serialization.markdown import to_markdown
         return to_markdown(self, include_values=include_values)
 
     def to_context(self, *, max_chars: int = 8000, include_values: bool = False) -> str:
+        """Render compact context with warning and aggregation evidence when space allows."""
         from ..serialization.context import to_context
         return to_context(self, max_chars=max_chars, include_values=include_values)
 

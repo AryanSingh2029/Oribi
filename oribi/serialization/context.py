@@ -1,8 +1,37 @@
 """Compact AI-oriented rendering of an existing context snapshot."""
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from numbers import Number
 from typing import Any
+
+
+_ContextLine = str | tuple[str, str]
+
+
+def _render_with_evidence(sections: Sequence[Sequence[_ContextLine]], max_chars: int) -> str | None:
+    """Reserve space for every existing line before including optional evidence."""
+    lines: list[_ContextLine] = []
+    for section in sections:
+        if lines:
+            lines.append("")
+        lines.extend(section)
+    available = max_chars - (len(lines) - 1)
+    available -= sum(len(line if isinstance(line, str) else line[0]) for line in lines)
+    if available < 0:
+        return None
+
+    rendered: list[str] = []
+    for line in lines:
+        if isinstance(line, str):
+            rendered.append(line)
+        else:
+            text, evidence = line
+            if len(evidence) <= available:
+                text += evidence
+                available -= len(evidence)
+            rendered.append(text)
+    return "\n".join(rendered)
 
 
 def _format_aggregations(operations: Any) -> str:
@@ -209,7 +238,7 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
     all_warnings = list(context.warnings)
     for col in context.columns:
         all_warnings.extend(col.warnings)
-    warning_lines = ["WARNINGS"] if all_warnings else []
+    warning_lines: list[_ContextLine] = ["WARNINGS"] if all_warnings else []
     seen_warnings: set[tuple[str, str]] = set()
     for warning in all_warnings:
         if warning.code == "high_missingness":
@@ -221,17 +250,21 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
             message = f"\u26a0 {warning.message}"
         key = (warning.code, message)
         if key not in seen_warnings:
-            warning_lines.append(message)
+            if warning.evidence:
+                basis = " ".join(warning.evidence[0].statement.split())
+                warning_lines.append((message, f" · {basis}"))
+            else:
+                warning_lines.append(message)
             seen_warnings.add(key)
-    column_lines = ["COLUMNS"]
+    column_lines: list[_ContextLine] = ["COLUMNS"]
     ranked = sorted(context.columns, key=lambda c: c.name)
     for col in ranked:
         s = col.statistics
         aggregations = [
-            rec.operation for rec in col.recommendations
+            rec for rec in col.recommendations
             if rec.disposition in {"recommended", "caution"}
         ]
-        fields = [
+        fields: list[_ContextLine] = [
             "",
             col.name,
             f"{col.dtype} \u00b7 {col.semantic.role} \u00b7 {col.semantic.confidence:.0%} confidence",
@@ -240,12 +273,20 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
         if include_values and (s.minimum is not None or s.maximum is not None):
             stats += f" \u00b7 Range {_format_range_value(s.minimum)} \u2192 {_format_range_value(s.maximum)}"
         fields.append(stats)
-        fields.append(f"Aggregations: {_format_aggregations(aggregations)}")
+        aggregation_line = f"Aggregations: {_format_aggregations(rec.operation for rec in aggregations)}"
+        basis = list(dict.fromkeys(
+            " ".join(evidence.statement.split())
+            for rec in aggregations for evidence in rec.evidence
+        ))
+        if basis:
+            fields.append((aggregation_line, f"\nAggregation basis: {' · '.join(basis[:2])}"))
+        else:
+            fields.append(aggregation_line)
         if include_values and s.top_values:
             fields.append("Local value samples: " + ", ".join(f"{v} ({n})" for v, n in s.top_values))
         column_lines.extend(fields)
 
-    sections = [header, grain_lines]
+    sections: list[Sequence[_ContextLine]] = [header, grain_lines]
     role_lines = _column_role_lines(context)
     if role_lines:
         sections.append(role_lines)
@@ -258,9 +299,8 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
     if cardinality_lines:
         sections.append(cardinality_lines)
     sections.append(column_lines)
-    lines = [line for index, section in enumerate(sections) for line in (([""] if index else []) + section)]
-    result = "\n".join(lines)
-    if len(result) <= max_chars:
+    result = _render_with_evidence(sections, max_chars)
+    if result is not None:
         return result
     # Reserve the limited budget for a usable schema and warnings before
     # optional relationship prose. Every dropped section is acknowledged.

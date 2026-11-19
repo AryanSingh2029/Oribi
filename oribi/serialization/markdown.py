@@ -159,6 +159,8 @@ def to_markdown(context: Any, *, include_values: bool = False) -> str:
         lines += ["", "## Analytical warnings", ""]
         for warning in context.warnings:
             lines.append(f"- **{_md(warning.title)}** ({warning.severity}): {_md(warning.message)}")
+            if warning.evidence:
+                lines.append(f"  - Basis: {_md(warning.evidence[0].statement)}")
             if warning.implication:
                 lines.append(f"  - Implication: {_md(warning.implication)}")
             if warning.recommendation:
