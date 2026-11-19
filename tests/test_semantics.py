@@ -24,6 +24,15 @@ def test_unique_numeric_business_measure_stays_a_measure():
     assert {r.operation for r in column.recommendations} >= {"SUM", "MEAN", "MEDIAN"}
 
 
+def test_unique_integer_revenue_and_amount_stay_measures():
+    import pandas as pd
+
+    for name in ("revenue", "amount"):
+        column = inspect(pd.DataFrame({name: [10, 20, 35, 80]})).columns[0]
+        assert column.semantic.role == "measure"
+        assert "name_measure_hint" in {e.code for e in column.semantic.evidence}
+
+
 def test_numeric_identifier_name_outweighs_numeric_measure_type():
     import pandas as pd
 

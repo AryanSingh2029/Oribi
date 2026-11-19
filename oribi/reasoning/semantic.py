@@ -24,6 +24,7 @@ def infer_semantic(
     tokens = set(re.split(r"[^a-z0-9]+", lname))
     explicit_identifier_name = "id" in tokens or lname.endswith("_key")
     code_name = lname.endswith("_code")
+    measure_name = bool(tokens & {"amount", "revenue"})
     # A suffix alone cannot establish identity when only a few codes recur.
     categorical_code_shape = row_count >= 20 and distinct <= 3 and rate <= 0.15
     if explicit_identifier_name and distinct > 1:
@@ -55,6 +56,9 @@ def infer_semantic(
     if logical_type == "numeric":
         votes["measure"] = .48
         evidence.append(Evidence("numeric_type", "Column has a numeric dtype"))
+        if measure_name:
+            votes["measure"] = max(votes["measure"], .56)
+            evidence.append(Evidence("name_measure_hint", "Column name supports a quantitative measure"))
         if is_float:
             votes["measure"] = max(votes["measure"], .56)
             evidence.append(Evidence("floating_point_type", "Floating-point values are consistent with a quantitative measure"))
