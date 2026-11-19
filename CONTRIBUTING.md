@@ -59,24 +59,20 @@ python scripts/validate_package.py
 
 ## Releasing
 
-`project.version` in `pyproject.toml` is the single source of truth. Update it to the next PEP 440 version and add a matching `CHANGELOG.md` entry in the same commit. This repository already has the `v0.1.0` tag, so the next release must use a new version. Merge that change, then create a GitHub Release with a tag exactly matching `v<version>`. The release workflow checks the tag against the package metadata, reruns the full test matrix, builds and validates the wheel and source distribution, and publishes those exact artifacts to PyPI only when all prerequisites pass. A version already present on PyPI is immutable; PyPI rejects duplicate uploads and the publish job fails.
+Set the next PEP 440 version in `project.version` in `pyproject.toml` and `oribi.__version__` in `oribi/__init__.py`. Add a matching `CHANGELOG.md` entry in the same commit. Merge that change, then create a GitHub Release with an annotated tag exactly matching `v<version>`. The release workflow checks the tag against the package metadata, reruns the full test matrix, builds and validates the wheel and source distribution, and publishes those exact artifacts to PyPI only when all prerequisites pass. A version already present on PyPI is immutable. PyPI rejects duplicate uploads and the publish job fails.
 
 Before the first release, configure PyPI Trusted Publishing for this GitHub repository (no PyPI token is stored in GitHub): on PyPI, add a pending publisher for owner `samhoon000`, repository `Oribi`, workflow file `publish.yml`, and environment name `pypi`. In GitHub, create an environment named `pypi` under **Settings → Environments**. Publish a GitHub Release to trigger deployment. The publish job receives only the `id-token: write` permission needed for OIDC.
 
-You can prepare the first release from a clean, committed checkout with:
+For example, after the release PR is merged and CI is green, tag the tested release commit and publish its GitHub Release:
 
 ```bash
-# First set project.version to 0.1.1 in pyproject.toml and add a 0.1.1
-# entry to CHANGELOG.md. Confirm 0.1.1 is not already registered on PyPI.
-git add pyproject.toml CHANGELOG.md
-git commit -m "release: prepare v0.1.1"
-git push origin main
-git tag v0.1.1
-git push origin v0.1.1
-gh release create v0.1.1 --title "Oribi v0.1.1" --generate-notes
+# Replace 0.2.0 with the new version after confirming it is unused on PyPI.
+git tag -a v0.2.0 <tested-release-commit> -m "Release Oribi 0.2.0"
+git push origin v0.2.0
+gh release create v0.2.0 --verify-tag --title "Oribi v0.2.0" --generate-notes
 ```
 
-If `0.1.1` is already registered on PyPI, choose a higher unused version and use it consistently in the files, commit, tag, and release. Create the GitHub Release only after its commit is on the default branch and CI is green. The release workflow uses the release tag commit, not the moving branch head.
+If the version is already registered on PyPI, choose a higher unused version and use it consistently in the files, commit, tag, and release. Create the GitHub Release only after its commit is on the default branch and CI is green. The release workflow checks out the release tag.
 
 ## Project structure
 

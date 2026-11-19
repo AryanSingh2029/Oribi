@@ -24,9 +24,8 @@ def detect_candidate_keys(
     """Collect qualifying single and bounded pair candidates.
 
     Pair search considers at most ``max_columns`` non-unique, non-measure
-    columns (28 pairs at the default limit of eight), and only
-    runs below ``max_exact_rows``. This bounds exact combination scans while
-    allowing all qualifying candidates in the searched set to be retained.
+    columns (28 pairs at the default limit of eight). It runs at or below
+    ``max_exact_rows`` and retains all qualifying candidates in the searched set.
     """
     row_count = len(frame)
     if row_count == 0:

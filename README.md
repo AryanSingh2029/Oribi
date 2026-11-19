@@ -75,7 +75,7 @@ Each method renders the same profile. The serializers do not re read the DataFra
 
 Oribi profiles the DataFrame in memory and does not keep a reference to it in the returned context. The in-memory `DatasetContext` retains local `top_values` and exact bounds for inspection.
 
-By default, shareable exports (`to_dict`, `to_json`, `to_markdown`, and `to_context`) omit sampled cell values and exact bounds, regardless of column name. Dictionary and JSON exports retain top frequency counts; evidence detail strings are redacted recursively. Numeric summary statistics are suppressed when fewer than three values were observed, since they could reveal an individual value.
+By default, `to_dict`, `to_json`, `to_markdown`, and `to_context` omit sampled cell values and exact bounds. Dictionary and JSON exports retain top frequency counts and omit strings in evidence details. They also omit means, medians, standard deviations, skewness, and quantiles when fewer than three non-missing values were observed.
 
 You can explicitly include local values and bounds when exporting:
 
@@ -83,7 +83,9 @@ You can explicitly include local values and bounds when exporting:
 json_text = context.to_json(include_values=True)
 ```
 
-The other export methods accept the same option. Treat opt-in output as containing raw data details. Aggregates can also disclose information in some settings, so review context before sharing it, especially when the source is sensitive.
+The other export methods accept the same option. Treat opt-in output as containing raw data details. Column and index names and aggregates can disclose information, so review context before sharing it, especially when the source is sensitive.
+
+Since Oribi 0.2.0, dictionary and JSON exports use `schema_version: "2"`. Update consumers that expect schema version 1 or depend on the previous Markdown or compact text layout. Use `include_values=True` when callers need local samples and bounds in version 2.
 
 ## Configure a profile
 
@@ -114,7 +116,7 @@ Use `context.profile.row_count` and the configured limit to tell when these calc
 
 Oribi uses deterministic heuristics based on observed values, data types, and supporting evidence. Column names can contribute to role inference, but they cannot establish a relationship by themselves.
 
-- A candidate key has no observed collisions or null components under the profiling rules. That does not prove it is a business key.
+- A candidate key with `verified_unique=True` has no observed collisions or null components. Approximate candidates can have collisions or missing values. A verified candidate still needs domain validation before it can be used as a business key.
 - A likely grain describes a pattern in the observed rows. It can remain undetermined when the evidence is weak or ambiguous.
 - A relationship within one DataFrame does not prove that a join to another table is valid or safe.
 - Confidence scores describe heuristic strength. They are not calibrated probabilities.
@@ -125,7 +127,7 @@ Use the profile as evidence for further analysis, and check whether each inferen
 
 Oribi currently works with in memory pandas DataFrames. It does not connect to databases or remote data sources, and it does not include an AI provider integration. You choose where the generated context goes.
 
-- Python 3.10–3.14 and pandas 1.5.3 or newer, below pandas 4.
+- Python 3.10–3.14 and pandas 1.5.3 or newer, below pandas 4. Use NumPy 1.x with pandas 1.5.3.
 - Column labels must be unique strings.
 - Datetime like text is not parsed automatically.
 - Native complex valued columns are unsupported and raise `InvalidInputError`.

@@ -51,8 +51,8 @@ def profile_column(obs: ColumnObservation, row_count: int, top_k: int, include_q
             # excluded rather than turning the whole statistic into NaN.
             finite = numeric[numeric.map(math.isfinite)]
             values.update(
-                minimum=finite_or_none(finite.min()) if len(finite) else None,
-                maximum=finite_or_none(finite.max()) if len(finite) else None,
+                minimum=finite.min() if len(finite) else None,
+                maximum=finite.max() if len(finite) else None,
                 mean=finite_or_none(finite.mean()) if len(finite) else None,
                 median=finite_or_none(finite.median()) if len(finite) else None,
                 standard_deviation=finite_or_none(finite.std()) if len(finite) else None,

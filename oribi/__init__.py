@@ -23,4 +23,4 @@ __all__ = [
     "OribiError", "SemanticContext", "StatisticsContext", "Warning", "inspect",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

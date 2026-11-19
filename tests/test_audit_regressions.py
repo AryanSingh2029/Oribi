@@ -38,6 +38,13 @@ def test_exact_bounds_and_tiny_numeric_summaries_require_opt_in():
     assert "812345" in opt_in and "2026-01-03" in opt_in
 
 
+def test_markdown_renders_opt_in_samples_as_literal_text():
+    sample = "<em>example</em>\n**second line**"
+    markdown = inspect(pd.DataFrame({"value": [sample]})).to_markdown(include_values=True)
+    assert "<em>" not in markdown
+    assert r"- Local value samples: \<em\>example\</em\> \*\*second line\*\* (1)" in markdown
+
+
 def test_nested_evidence_strings_cannot_bypass_export_redaction():
     context = inspect(pd.DataFrame({"ordinary": ["a", "b"]}))
     warning = Warning("example", "low", "Example", "No raw values in message", (
