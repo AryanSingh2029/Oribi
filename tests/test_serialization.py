@@ -72,6 +72,19 @@ def test_text_renderers_surface_warning_and_aggregation_evidence(sales_frame):
     assert context.to_dict() == before
 
 
+def test_context_preserves_aggregations_when_only_evidence_exceeds_budget():
+    import pandas as pd
+
+    context = inspect(pd.DataFrame({"amount": [1.0, 2.0, 3.0]}))
+    full = context.to_context()
+    report = "\n".join(line for line in full.splitlines() if not line.startswith("Aggregation basis:"))
+
+    constrained = context.to_context(max_chars=len(report))
+
+    assert "Aggregations: SUM · MEAN" in constrained
+    assert constrained == report
+
+
 def test_aggregation_formatter_preserves_names_as_complete_values():
     assert _format_aggregations(["COUNT DISTINCT"]) == "COUNT DISTINCT"
     assert _format_aggregations(["SUM", "MEAN"]) == "SUM · MEAN"
