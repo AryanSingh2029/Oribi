@@ -2,18 +2,32 @@
 
 All notable changes to Oribi are recorded here.
 
-## Unreleased
+## 0.2.0 — 2026-11-19
 
-- Make shareable exports omit sampled cell values by default; add explicit `include_values` opt-in and safe top-frequency counts. Serialized schema version is now `2`.
-- Separate observed unique keys from approximate candidates, and prevent colliding or null-bearing candidates from establishing grain.
-- Distinguish exact dependencies from approximate mappings with contradiction and paired-row evidence; exclude numeric measures from entity grouping inference.
-- Bound relationship discovery, compact-context rendering, and temporal gap examples; retain schema information on wide frames.
-- Profile meaningful pandas indexes separately from columns and reduce identifier confidence for highly repeated low-diversity codes.
-- Count index duplicates with `Index.duplicated()`, so a single missing index entry is no longer reported as a duplicate of a unique index; repeated missing entries still count (#43).
-- Print each warning message once in `to_markdown()`: a column lists its warnings by severity and title and points to "Analytical warnings", which keeps the full message, implication and suggestion (#44).
-- Report `timedelta64` columns with the logical type `duration` and stop treating unique durations as identifiers or as a single-column key/grain (#45).
-- Escape Markdown characters in column names in `to_markdown()` and collapse line breaks in them, so names render as literal text in headings, bold text, relationships and warnings (#39).
-- Warn on text columns with more than 100 distinct values (`high_cardinality_text`), with distinct-count evidence, unless the column is inferred as an identifier (#7).
+### Compatibility
+
+- Dictionary and JSON exports now use schema version `2`. Exports omit sampled cell values and exact bounds by default. Use `include_values=True` for local samples and bounds. Dictionary and JSON exports retain frequency counts. Consumers that parse the previous Markdown or compact context layout should update their parsers.
+- `ProfileOptions` validates booleans and integer limits when constructed. Native complex-valued columns raise `InvalidInputError`.
+
+### Added and improved
+
+- Report per-column cardinality, relationships to the observation grain, and one-to-one and one-to-many value mappings. Distinguish exact dependencies from approximate mappings with contradiction and paired-row evidence. Exclude numeric measures from entity grouping inference.
+- Report verified unique keys separately from approximate candidates. Colliding or null-bearing key candidates cannot establish grain. Improve role inference for repeated low-diversity codes and numeric columns.
+- Profile meaningful pandas indexes separately and improve the Markdown and compact context reports. Compact output retains schema information on wide frames.
+- Bound relationship discovery and temporal-gap warnings and examples. Document that the `max_exact_rows` limit includes the boundary for quantiles, composite keys, and observed relationships.
+- Warn when a text column has more than 100 distinct values and is not inferred as an identifier.
+
+### Fixed
+
+- Count duplicate indexes consistently with pandas and handle non-string index names and repeated MultiIndex level names.
+- Profile real numeric object columns with missing values, exclude infinities from summary moments and quantiles, and preserve exact integer bounds. Keep positional construction of `StatisticsContext` compatible with 0.1.0.
+- Exclude unused categories from top values and detach sampled mutable lists and dictionaries from source cells.
+- Classify elapsed durations as `duration` and exclude them from single-column key selection. Preserve nanosecond cadences and timezone offsets in temporal output.
+- Escape Markdown in column names and opt-in value samples. Show each full analytical warning once.
+
+### Documentation and packaging
+
+- Refresh the README and contributor file map. Validate the wheel and source distribution, test the installed wheel on Python 3.10–3.14, and publish through GitHub Actions when a GitHub Release is published.
 
 ## 0.1.0 — Initial release
 

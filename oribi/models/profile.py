@@ -22,8 +22,8 @@ class StatisticsContext:
     negative_count: int | None = None
     skewness: float | None = None
     top_values: tuple[tuple[Any, int], ...] = ()
-    top_frequencies: tuple[int, ...] = ()
     date_range: str | None = None
+    top_frequencies: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "quantiles", MappingProxyType(dict(self.quantiles)))

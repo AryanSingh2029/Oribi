@@ -3,8 +3,17 @@ import math
 import pandas as pd
 import pytest
 
-from oribi import ProfileOptions, inspect
+from oribi import ProfileOptions, StatisticsContext, inspect
 from oribi.exceptions import InvalidInputError
+
+
+def test_statistics_context_preserves_positional_date_range():
+    date_range = "2026-01-01 to 2026-01-05"
+    statistics = StatisticsContext(
+        0, 0.0, 2, 1.0, None, None, None, None, None, {}, None, None, None, (), date_range
+    )
+    assert statistics.date_range == date_range
+    assert statistics.top_frequencies == ()
 
 
 def test_inspect_returns_context_and_is_deterministic(sales_frame):

@@ -8,7 +8,7 @@ _LINE_BREAKS = re.compile(r"\s*[\r\n]+\s*")
 
 
 def _md(value: Any) -> str:
-    """Render a column name or message as literal text inside a Markdown line.
+    """Render a column name, value, or message as literal Markdown text.
 
     Markdown control characters are backslash-escaped and line breaks are
     collapsed to a single space, so a column name cannot start a new block or
@@ -133,9 +133,10 @@ def to_markdown(context: Any, *, include_values: bool = False) -> str:
                     f"{card.missing_count:,} missing ({card.missing_rate:.1%})"
                 )
         if include_values and (s.minimum is not None or s.maximum is not None):
-            lines.append(f"- Range: {s.minimum} to {s.maximum}")
+            lines.append(f"- Range: {_md(s.minimum)} to {_md(s.maximum)}")
         if include_values and s.top_values:
-            lines.append(f"- Local value samples: {', '.join(f'{value} ({count})' for value, count in s.top_values)}")
+            samples = ", ".join(f"{_md(value)} ({count})" for value, count in s.top_values)
+            lines.append(f"- Local value samples: {samples}")
         aggregations = [
             rec.operation for rec in col.recommendations
             if rec.disposition in {"recommended", "caution"}

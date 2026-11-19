@@ -4,6 +4,14 @@ import pytest
 from oribi import ProfileOptions, inspect
 
 
+def test_large_integer_bounds_keep_exact_precision():
+    values = [2**53 + 1, 2**53 + 3]
+    context = inspect(pd.DataFrame({"value": values}))
+    statistics = context.to_dict(include_values=True)["columns"][0]["statistics"]
+    assert statistics["minimum"] == values[0]
+    assert statistics["maximum"] == values[1]
+
+
 @pytest.mark.parametrize("values,mean", [([1, 2, 3, pd.NA], 2.0), ([1.5, 2.5, pd.NA], 2.0), ([1, 3.0, pd.NA], 2.0)])
 def test_numeric_object_values_with_missing_data_are_profiled(values, mean):
     column = inspect(pd.DataFrame({"amount": pd.Series(values, dtype=object)})).columns[0]
