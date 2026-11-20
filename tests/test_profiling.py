@@ -169,6 +169,92 @@ def test_top_k_tied_categories_keep_limit_and_counts():
     assert column.statistics.top_frequencies == (2, 2)
 
 
+@pytest.mark.parametrize("error", [RuntimeError, ValueError])
+@pytest.mark.parametrize("extra_values", [0, 40])
+def test_unrepresentable_values_do_not_break_top_k(error, extra_values):
+    class Opaque:
+        def __repr__(self):
+            raise error("representation unavailable")
+
+    opaque = Opaque()
+    values = ["common", "common", opaque, *range(extra_values), None]
+    column = inspect(pd.DataFrame({"category": values}), options=ProfileOptions(top_k=1)).columns[0]
+    assert column.statistics.top_values == (("common", 2),)
+    assert column.statistics.top_frequencies == (2,)
+
+    selected = inspect(pd.DataFrame({"category": [opaque, opaque, "common"]})).columns[0]
+    value, count = selected.statistics.top_values[0]
+    assert value is opaque
+    assert count == 2
+
+
+def test_opaque_representation_collisions_use_count_order_after_supported_values():
+    class Opaque:
+        def __repr__(self):
+            return "same representation"
+
+    a, b = Opaque(), Opaque()
+    for first, second in ((a, b), (b, a)):
+        frame = pd.DataFrame({"category": pd.Categorical(
+            [a, b, a, b, "text", "text"], categories=[first, second, "text"],
+        )})
+        stats = inspect(frame, options=ProfileOptions(top_k=2)).columns[0].statistics
+        assert stats.top_values[0] == ("text", 2)
+        assert stats.top_values[1][0] is first
+        assert stats.top_frequencies == (2, 2)
+
+
+def test_supported_mixed_values_have_stable_ties():
+    left, right = frozenset({"a", "x"}), frozenset({"b", "x"})
+    values = [right, "1", 1, left, right, "1", 1, left, None]
+    expected = ((left, 2), (right, 2), (1, 2), ("1", 2))
+    for ordering in (values, values[::-1]):
+        stats = inspect(pd.DataFrame({"mixed": pd.Series(ordering, dtype=object)})).columns[0].statistics
+        assert stats.top_values == expected
+        assert stats.missing_count == 1
+
+
+@pytest.mark.parametrize(("dtype", "values"), [
+    ("Int64", [1, 0]), ("UInt64", [1, 0]), ("Float64", [1.0, 0.0]), ("boolean", [True, False]),
+])
+def test_nullable_scalar_ties_have_stable_order(dtype, values):
+    for ordering in (values, values[::-1]):
+        frame = pd.DataFrame({"value": pd.Series(ordering * 2 + [None], dtype=dtype)})
+        stats = inspect(frame, options=ProfileOptions(top_k=1)).columns[0].statistics
+        assert stats.top_values == ((values[1], 2),)
+
+
+def test_interval_category_ties_have_stable_order():
+    left, right = pd.Interval(0, 1), pd.Interval(1, 2)
+    for categories in ([right, left], [left, right]):
+        frame = pd.DataFrame({"band": pd.Categorical(categories * 2, categories=categories)})
+        stats = inspect(frame, options=ProfileOptions(top_k=1)).columns[0].statistics
+        assert stats.top_values == ((left, 2),)
+
+
+@pytest.mark.parametrize("leaders", [[], ["winner"] * 3])
+def test_bounded_top_k_handles_clear_leaders_and_large_categorical_ties(leaders):
+    labels = [f"label_{i:03d}" for i in range(500)]
+    values = labels[::-1] + leaders + [None]
+    categories = ["unused", "winner", *labels]
+    expected = (("winner", 3),) if leaders else ()
+    expected += tuple((label, 1) for label in labels[:4 - len(expected)])
+    for rows, order in ((values, categories), (values[::-1], categories[::-1])):
+        frame = pd.DataFrame({"category": pd.Categorical(rows, categories=order)})
+        stats = inspect(frame, options=ProfileOptions(top_k=4)).columns[0].statistics
+        assert stats.top_values == expected
+        assert stats.top_frequencies == tuple(count for _, count in expected)
+
+
+def test_top_k_ignores_many_unused_categories_at_zero_frequency_cutoff():
+    frame = pd.DataFrame({"category": pd.Categorical(
+        ["second", None, "first"], categories=[*(str(i) for i in range(80)), "second", "first"],
+    )})
+    stats = inspect(frame).columns[0].statistics
+    assert stats.top_values == (("first", 1), ("second", 1))
+    assert stats.top_frequencies == (1, 1)
+
+
 def test_temporal_gap_warning_is_serialized():
     context, _, warnings = _temporal_warnings(["2026-01-01", "2026-01-02", "2026-01-04", "2026-01-05"])
     assert warnings[0] in context.warnings
