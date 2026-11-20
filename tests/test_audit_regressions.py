@@ -273,3 +273,33 @@ def test_duration_column_does_not_displace_integer_identifier_or_datetime_behavi
     assert roles["placed_at"] == "temporal"
     assert roles["elapsed"] != "identifier"
     assert context.grain.columns == ("order_id",)
+
+
+def test_to_context_categorical_values_respect_max_chars_without_dropping_sections():
+    frame = pd.DataFrame({
+        "id": range(1, 6),
+        "category": [
+            "alpha_long_category_name",
+            "beta_long_category_name",
+            "gamma_long_category_name",
+            "delta_long_category_name",
+            "alpha_long_category_name",
+        ],
+        "score": [10, 20, 30, 40, 50],
+    })
+    context = inspect(frame)
+
+    full_ctx = context.to_context(max_chars=8000, include_values=True)
+    assert "CARDINALITY" in full_ctx
+    assert "Categories (all 4):" in full_ctx
+
+    without_categories = "\n".join(
+        line for line in full_ctx.splitlines() if not line.startswith("Categories (")
+    )
+    tight_budget = len(without_categories)
+
+    tight_ctx = context.to_context(max_chars=tight_budget, include_values=True)
+    assert len(tight_ctx) <= tight_budget
+    assert "CARDINALITY" in tight_ctx
+    assert "Categories (all 4):" not in tight_ctx
+    assert "[Context truncated.]" not in tight_ctx

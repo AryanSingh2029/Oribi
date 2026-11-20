@@ -7,7 +7,7 @@ import pandas as pd
 
 from .exceptions import InvalidInputError
 from .models.context import ColumnContext, DatasetContext
-from .models.evidence import Warning
+from .models.evidence import CategoricalContext, Warning
 from .models.profile import DatasetProfile, IndexContext
 from .profiling.columns import profile_column
 from .profiling.cardinality import profile_cardinality
@@ -145,6 +145,16 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
         if obs.logical_type == "temporal":
             warnings += temporal_gap_warnings(obs.series, name, max_examples=options.max_gap_examples,
                                               max_warnings=options.max_gap_warnings)
+        categories = None
+        if (
+            semantics[name].role in {"categorical", "dimension"}
+            and stats[name].distinct_count > 0
+            and stats[name].top_values
+        ):
+            categories = CategoricalContext(
+                values=stats[name].top_values,
+                is_complete=len(stats[name].top_values) == stats[name].distinct_count,
+        )
         columns.append(ColumnContext(
             name,
             str(obs.series.dtype),
@@ -155,6 +165,7 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
             warnings,
             cardinalities[name],
             column_relationships.get(name, ()),
+            categories,
         ))
     global_warnings = list(dataset_warnings(duplicates, nrows))
     for col in columns:

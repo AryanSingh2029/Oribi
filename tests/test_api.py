@@ -104,3 +104,47 @@ def test_inspect_rejects_falsy_invalid_options(invalid_options):
 def test_inspect_none_and_omitted_options_match_defaults():
     frame = pd.DataFrame({"value": [1, 2, 3]})
     assert inspect(frame).to_dict() == inspect(frame, options=None).to_dict()
+
+
+def test_categorical_context_complete_vs_truncated():
+    frame = pd.DataFrame({
+        "status": pd.Categorical(["open", "closed", "open", "pending", "open"]),
+        "region": ["north", "south", "east", "north", "south"],
+        "amount": [10.5, 20.0, 30.25, 40.0, 50.0],
+        "user_id": [1, 2, 3, 4, 5]
+    })
+    context = inspect(frame, options=ProfileOptions(top_k=2))
+    by_name = {col.name: col for col in context.columns}
+
+    status_cats = by_name["status"].categories
+    assert status_cats is not None
+    assert status_cats.is_complete is False
+    assert status_cats.values == (("open", 3), ("closed", 1))
+
+    region_cats = by_name["region"].categories
+    assert region_cats is not None
+    assert region_cats.is_complete is False
+    assert len(region_cats.values) == 2
+
+    full_context = inspect(frame, options=ProfileOptions(top_k=10))
+    full_by_name = {col.name: col for col in full_context.columns}
+    assert full_by_name["status"].categories is not None
+    assert full_by_name["status"].categories.is_complete is True
+    assert dict(full_by_name["status"].categories.values) == {"open": 3, "closed": 1, "pending": 1}
+
+    assert full_by_name["amount"].categories is None
+    assert full_by_name["user_id"].categories is None
+
+
+def test_categorical_context_not_populated_when_values_unknown():
+    frame = pd.DataFrame({
+        "empty_cat": pd.Series([None] * 200, dtype="category"),
+        "skipped_int_dim": [i % 15 for i in range(200)],
+    })
+    context = inspect(frame, options=ProfileOptions(top_k=2))
+    by_name = {col.name: col for col in context.columns}
+
+    assert by_name["empty_cat"].categories is None
+    assert by_name["skipped_int_dim"].semantic.role == "dimension"
+    assert by_name["skipped_int_dim"].statistics.top_values == ()
+    assert by_name["skipped_int_dim"].categories is None
