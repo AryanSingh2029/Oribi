@@ -10,7 +10,7 @@ All notable changes to Oribi are recorded here.
 - Explain why counting rows differs from counting distinct entities when identifiers repeat or duplicate rows occur.
 - Add aggregation recommendations and usage guidance for categorical and dimension columns, explaining when grouping or counting distinct values is useful.
 - Provide explicit starting-point rationale for SUM and MEAN on numeric measures while preserving cautions for negative values and skew.
-- Surface inappropriate aggregation guidance in Markdown and compact context reports.
+- Surface inappropriate aggregation guidance and useful operations (such as COUNT DISTINCT on categorical columns or MEDIAN on measures) in Markdown and compact context reports.
 
 ## 0.2.0 — 2026-11-19
 

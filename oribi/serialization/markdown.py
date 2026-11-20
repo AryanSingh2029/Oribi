@@ -142,6 +142,12 @@ def to_markdown(context: Any, *, include_values: bool = False) -> str:
             if rec.disposition in {"recommended", "caution"}
         ]
         lines.append(f"- Recommended aggregations: {', '.join(aggregations) if aggregations else 'None'}")
+        useful = [
+            rec.operation for rec in col.recommendations
+            if rec.disposition == "useful"
+        ]
+        if useful:
+            lines.append(f"- Useful operations: {', '.join(useful)}")
         inappropriate = [
             rec.operation for rec in col.recommendations
             if rec.disposition == "not_applicable"

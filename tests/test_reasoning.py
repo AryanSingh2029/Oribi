@@ -147,9 +147,11 @@ def test_aggregation_guidance_in_markdown_and_context(sales_frame):
     assert "Aggregations: COUNT DISTINCT" in compact
     assert "Inappropriate aggregations: SUM · MEAN" in compact
 
-    # Measures show recommended SUM, MEAN and no inappropriate line
+    # Measures show recommended SUM, MEAN, useful MEDIAN, and no inappropriate line
     revenue_section = compact.split("\nrevenue\n", 1)[1]
     assert "Aggregations: SUM · MEAN" in revenue_section
+    assert "Useful operations: MEDIAN" in revenue_section
+    assert "- Useful operations: MEDIAN" in markdown
     assert "Inappropriate aggregations" not in revenue_section
 
     # Dimensions show recommended GROUP BY
@@ -158,6 +160,25 @@ def test_aggregation_guidance_in_markdown_and_context(sales_frame):
 
     # Warnings explain row count vs entity count
     assert "Row counts measure record occurrences rather than unique entities" in markdown
+
+
+def test_useful_operations_rendered_in_markdown_and_context():
+    frame = pd.DataFrame({
+        "category": pd.Categorical(["A", "B", "A", "C"]),
+    })
+    context = inspect(frame)
+    col = context.columns[0]
+    assert col.semantic.role == "categorical"
+    assert any(r.operation == "COUNT DISTINCT" and r.disposition == "useful" for r in col.recommendations)
+
+    markdown = context.to_markdown()
+    assert "- Recommended aggregations: GROUP BY" in markdown
+    assert "- Useful operations: COUNT DISTINCT" in markdown
+
+    compact = context.to_context()
+    cat_section = compact.split("\ncategory\n", 1)[1]
+    assert "Aggregations: GROUP BY" in cat_section
+    assert "Useful operations: COUNT DISTINCT" in cat_section
 
 
 def test_aggregation_guidance_preserves_privacy():
