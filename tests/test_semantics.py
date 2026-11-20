@@ -164,3 +164,51 @@ def test_identifier_precedence_and_misleading_substring_controls():
 
     short_unnamed = inspect(pd.DataFrame({"rating": [1, 2, 3]})).columns[0]
     assert short_unnamed.semantic.role == "dimension"
+
+
+def test_identifier_guardrails_discount_float_negative_and_constant_values():
+    import pandas as pd
+
+    frame = pd.DataFrame({
+        "invoice_no": list(range(101, 105)),
+        "amount_id": [12.5, 24.75, 38.25, 51.0],
+        "negative_id": [-101, -102, -103, -104],
+        "constant_id": list(range(42, 43)) * 4,
+    })
+    context = inspect(frame)
+    by_name = {col.name: col for col in context.columns}
+
+    assert by_name["invoice_no"].semantic.role == "identifier"
+
+    assert by_name["amount_id"].semantic.role != "identifier"
+    assert "non_identifier_numeric_domain" in {e.code for e in by_name["amount_id"].semantic.evidence}
+
+    assert by_name["negative_id"].semantic.role == "unknown"
+    assert "non_identifier_numeric_domain" in {e.code for e in by_name["negative_id"].semantic.evidence}
+
+    assert by_name["constant_id"].semantic.role != "identifier"
+    assert "constant_numeric_values" in {e.code for e in by_name["constant_id"].semantic.evidence}
+    assert not any(r.operation == "COUNT DISTINCT" and r.disposition == "recommended" for r in by_name["constant_id"].recommendations)
+
+
+def test_conflicting_and_borderline_numeric_signals_remain_conservative():
+    import pandas as pd
+
+    frame = pd.DataFrame({
+        "borderline_seq": list(range(1, 10)) + list(range(1, 2)),
+        "constant_float": [3.14] * 10,
+        "signed_code": [-1, 0, 1, -1, 0, 1, -1, 0, 1, -1],
+    })
+    context = inspect(frame)
+    by_name = {col.name: col for col in context.columns}
+
+    borderline = by_name["borderline_seq"]
+    assert borderline.semantic.role == "unknown"
+    assert "high_integer_uniqueness" in {e.code for e in borderline.semantic.evidence}
+
+    const_float = by_name["constant_float"]
+    assert const_float.semantic.role == "unknown"
+    assert "constant_numeric_values" in {e.code for e in const_float.semantic.evidence}
+
+    assert by_name["signed_code"].semantic.role == "dimension"
+    assert not any(r.operation in {"SUM", "MEAN"} and r.disposition == "recommended" for r in by_name["signed_code"].recommendations)
