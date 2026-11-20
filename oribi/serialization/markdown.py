@@ -137,6 +137,13 @@ def to_markdown(context: Any, *, include_values: bool = False) -> str:
         if include_values and s.top_values:
             samples = ", ".join(f"{_md(value)} ({count})" for value, count in s.top_values)
             lines.append(f"- Local value samples: {samples}")
+        if include_values and col.categories is not None:
+            cats = col.categories
+            formatted = ", ".join(f"{_md(value)} ({count})" for value, count in cats.values)
+            if cats.is_complete:
+                lines.append(f"- Categories (all {s.distinct_count:,}): {formatted}")
+            else:
+                lines.append(f"- Top categories (top {len(cats.values):,} of {s.distinct_count:,}): {formatted}")
         aggregations = [
             rec.operation for rec in col.recommendations
             if rec.disposition in {"recommended", "caution"}

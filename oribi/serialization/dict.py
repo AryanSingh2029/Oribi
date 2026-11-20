@@ -12,7 +12,10 @@ def _normalize(value: Any, include_values: bool = False, *, evidence_details: bo
     if is_dataclass(value):
         result = {}
         for field in fields(value):
-            if field.name == "top_values" and not include_values:
+            if not include_values and (
+                field.name == "top_values"
+                or (type(value).__name__ == "CategoricalContext" and field.name == "values")
+            ):
                 result[field.name] = []
             else:
                 result[field.name] = _normalize(

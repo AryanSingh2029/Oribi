@@ -110,6 +110,14 @@ class CardinalityContext:
 
 
 @dataclass(frozen=True)
+class CategoricalContext:
+    """Observed category values and counts for categorical or dimension columns."""
+
+    values: tuple[tuple[Any, int], ...]
+    is_complete: bool
+
+
+@dataclass(frozen=True)
 class ColumnRelationshipContext:
     """A data-supported relationship between a column and observations.
 

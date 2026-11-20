@@ -284,6 +284,17 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
             fields.append(aggregation_line)
         if include_values and s.top_values:
             fields.append("Local value samples: " + ", ".join(f"{v} ({n})" for v, n in s.top_values))
+        if include_values and col.categories is not None:
+            cats = col.categories
+            formatted = ", ".join(f"{v} ({n})" for v, n in cats.values)
+            if cats.is_complete:
+                category_line = f"Categories (all {s.distinct_count:,}): {formatted}"
+            else:
+                category_line = f"Top categories (top {len(cats.values):,} of {s.distinct_count:,}): {formatted}"
+            last_text, last_evidence = (
+                fields[-1] if isinstance(fields[-1], tuple) else (fields[-1], "")
+            )
+            fields[-1] = (last_text, f"{last_evidence}\n{category_line}")
         column_lines.extend(fields)
 
     sections: list[Sequence[_ContextLine]] = [header, grain_lines]
