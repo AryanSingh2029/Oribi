@@ -7,13 +7,18 @@ from ..models.evidence import Evidence, SemanticContext
 
 _MIN_ROLE_SCORE = 0.55
 _AMBIGUITY_MARGIN = 0.12
-_MEASURE_NAME_TOKENS = {"amount", "revenue", "sales", "profit"}
+_MEASURE_NAME_TOKENS = {
+    "amount", "balance", "charge", "cost", "discount", "fee",
+    "margin", "price", "profit", "qty", "quantity", "revenue",
+    "salary", "sales", "spend", "subtotal", "tax", "total",
+}
 _LABEL_NAME_TOKENS = {
     "band", "bands", "bin", "bins", "bucket", "buckets", "category", "categories",
     "class", "classes", "code", "codes", "label", "labels", "tier", "tiers",
 }
 _SUBJECT_NAME_TOKENS = _MEASURE_NAME_TOKENS | _LABEL_NAME_TOKENS
 _RANK_NAME_TOKENS = {"rank", "ranks", "ranking", "percentile", "percentiles", "quantile", "quantiles", "decile", "deciles"}
+_SOFT_IDENTIFIER_SUFFIX_TOKENS = {"no", "num", "number"}
 _NAME_WORD = re.compile(r"[a-z0-9]+")
 _VERSION_SUFFIX = re.compile(r"(?<=[^a-z0-9])v(?:er(?:sion)?)?[^a-z0-9]*[0-9]+$")
 
@@ -37,10 +42,14 @@ def infer_semantic(
     evidence: list[Evidence] = []
     distinct = stats.distinct_count
     rate = stats.distinct_rate
+    negative_count = getattr(stats, "negative_count", 0) or 0
+    std = getattr(stats, "standard_deviation", None)
+    has_dispersion = std is not None and std > 0
     words = column_name_words(name)
     tokens = set(words)
     explicit_identifier_name = "id" in tokens or (len(words) >= 2 and words[-1] == "key")
     code_name = len(words) >= 2 and words[-1] == "code"
+    soft_identifier_name = len(words) >= 2 and words[-1] in _SOFT_IDENTIFIER_SUFFIX_TOKENS
     # Label a measure by its subject, before any grouping qualifier such as
     # "by category". A leading qualifier in "category revenue" can describe the measure.
     subject = words[:words.index("by")] if "by" in tokens else words
@@ -50,11 +59,12 @@ def infer_semantic(
             subject_kind = word
             break
     label_name = subject_kind in _LABEL_NAME_TOKENS or not _RANK_NAME_TOKENS.isdisjoint(subject)
-    observed = row_count - stats.missing_count
-    unique_named_measure = (
-        distinct > 1 and distinct == observed and not (label_name or explicit_identifier_name or code_name)
+    measure_name = (
+        not (label_name or explicit_identifier_name or code_name or soft_identifier_name)
         and subject_kind in _MEASURE_NAME_TOKENS
     )
+    observed = row_count - stats.missing_count
+    unique_named_measure = measure_name and distinct > 1 and distinct == observed
     # A suffix alone cannot establish identity when only a few codes recur.
     categorical_code_shape = row_count >= 20 and distinct <= 3 and rate <= 0.15
     if explicit_identifier_name and distinct > 1:
@@ -75,26 +85,84 @@ def infer_semantic(
             f"Observed {distinct} distinct non-missing values",
             {"distinct_count": distinct, "row_count": row_count},
         ))
+    elif soft_identifier_name and distinct > 1:
+        votes["identifier"] = .46 if categorical_code_shape else .68
+        evidence.append(Evidence("name_identifier_hint", "Column name suggests an identifier"))
+        evidence.append(Evidence(
+            "identifier_value_variation",
+            f"Observed {distinct} distinct non-missing values",
+            {"distinct_count": distinct, "row_count": row_count},
+        ))
+
     if row_count and rate >= .98 and distinct > 1 and logical_type != "duration":
         # Uniqueness is supporting evidence, not proof of business identity.
         # Elapsed durations are skipped: unique durations do not identify entities.
         # It is deliberately weaker for numeric columns, which commonly hold
         # continuous measures that happen to be unique in small samples.
         unique_vote = .28 if logical_type == "numeric" else .62
+        if logical_type == "numeric" and not is_float and negative_count == 0 and soft_identifier_name:
+            unique_vote = .75
         votes["identifier"] = max(votes.get("identifier", 0), unique_vote)
         evidence.append(Evidence("mostly_unique", f"{distinct} distinct non-null values across {row_count} rows", {"distinct_count": distinct, "row_count": row_count, "distinct_rate": rate}))
+    elif (
+        logical_type == "numeric"
+        and not is_float
+        and negative_count == 0
+        and not (measure_name or label_name)
+        and row_count >= 10
+        and .90 <= rate < .98
+    ):
+        votes["identifier"] = max(votes.get("identifier", 0), .50)
+        evidence.append(Evidence(
+            "high_integer_uniqueness",
+            f"{distinct} distinct non-negative integer values across {row_count} rows",
+            {"distinct_count": distinct, "row_count": row_count, "distinct_rate": rate},
+        ))
+
+    is_low_cardinality_numeric = (
+        logical_type == "numeric"
+        and (not is_float or label_name)
+        and not unique_named_measure
+        and (
+            distinct <= min(20, max(3, row_count // 10))
+            or (row_count >= 20 and rate <= .1)
+        )
+    )
+
+    has_fractional_sample = any(
+        isinstance(val, float) and val.is_integer() is False
+        for val, _ in getattr(stats, "top_values", ())
+    )
+
     if logical_type == "numeric":
-        votes["measure"] = .48
+        measure_score = .48
         evidence.append(Evidence("numeric_type", "Column has a numeric dtype"))
-        if unique_named_measure:
-            votes["measure"] = max(votes["measure"], .56)
+        if measure_name and not is_low_cardinality_numeric:
+            measure_score += .08
             evidence.append(Evidence("name_measure_hint", "Column name supports a quantitative measure"))
-        if is_float and not label_name:
-            votes["measure"] = max(votes["measure"], .56)
+        if is_float and not label_name and not explicit_identifier_name:
+            measure_score += .08
             evidence.append(Evidence("floating_point_type", "Floating-point values are consistent with a quantitative measure"))
-        elif not label_name and row_count and rate < .98 and distinct > min(20, max(3, row_count // 10)):
-            votes["measure"] = max(votes["measure"], .56)
+        elif not label_name and not is_low_cardinality_numeric and row_count and rate < .98 and distinct > min(20, max(3, row_count // 10)):
+            measure_score += .08
             evidence.append(Evidence("repeated_numeric_measure_values", "Numeric values repeat across rows without having low categorical cardinality"))
+        if negative_count > 0 and not label_name and not is_low_cardinality_numeric:
+            measure_score += .06
+            evidence.append(Evidence("negative_numeric_values", "Negative numeric values are consistent with signed measurements", {"negative_count": negative_count}))
+        if has_dispersion and not label_name and not is_low_cardinality_numeric and not explicit_identifier_name and (measure_name or is_float or rate < .98):
+            measure_score += .06
+            evidence.append(Evidence("numeric_value_variability", "Numeric values exhibit non-zero dispersion", {"standard_deviation": std}))
+        if distinct <= 1 or std == 0:
+            # Constant numeric columns lack variability to serve as active measures or identifiers.
+            measure_score = min(measure_score, .48)
+            if "identifier" in votes:
+                votes["identifier"] = min(votes["identifier"], .48)
+            evidence.append(Evidence("constant_numeric_values", "Numeric values have zero dispersion"))
+        if "identifier" in votes and (negative_count > 0 or has_fractional_sample or (is_float and not explicit_identifier_name)):
+            # Negative or fractional values conflict with entity identifier semantics.
+            votes["identifier"] = round(votes["identifier"] * .60, 2)
+            evidence.append(Evidence("non_identifier_numeric_domain", "Floating-point or negative values conflict with entity identity"))
+        votes["measure"] = min(measure_score, .92)
     elif logical_type == "temporal":
         votes["temporal"] = .86
         evidence.append(Evidence("datetime_dtype", "Column has a datetime dtype"))
@@ -111,10 +179,7 @@ def infer_semantic(
         else:
             votes["dimension"] = .62
             evidence.append(Evidence("text_dimension", "Text values are reusable across rows"))
-    if logical_type == "numeric" and (not is_float or label_name) and not unique_named_measure and (
-        distinct <= min(20, max(3, row_count // 10))
-        or (row_count >= 20 and rate <= .1)
-    ):
+    if is_low_cardinality_numeric:
         votes["dimension"] = max(votes.get("dimension", 0), .72 if row_count >= 20 and rate <= .1 else .64)
         evidence.append(Evidence("low_cardinality_numeric", "Numeric values have low cardinality"))
     if not votes:
