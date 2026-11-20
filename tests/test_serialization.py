@@ -1,9 +1,12 @@
 import json
+from dataclasses import replace
+
 import pandas as pd
 
 import pytest
 
 from oribi import inspect, ProfileOptions
+from oribi.models.evidence import CategoricalContext
 from oribi.serialization.context import _format_aggregations, _format_range_value
 
 
@@ -84,6 +87,34 @@ def test_context_preserves_aggregations_when_only_evidence_exceeds_budget():
 
     assert "Aggregations: SUM · MEAN" in constrained
     assert constrained == report
+
+
+def test_truncated_context_keeps_qualified_operations_and_warnings():
+    import pandas as pd
+
+    context = inspect(pd.DataFrame({
+        "account_id": ["a", "a", "b", None],
+        **{f"measure_{i:02}": [10.0, 20.0, 40.0, 90.0] for i in range(17)},
+    }))
+    rendered = context.to_context()
+    assert len(rendered) <= 8000
+    assert rendered.endswith("[Context truncated.]")
+    assert rendered.count("SUM only for additive quantities") == 17
+    assert "account_id: Aggregations: COUNT DISTINCT | Inappropriate aggregations: SUM · MEAN" in rendered
+    for code in ("high_missingness", "non_unique_identifier"):
+        warning = next(w for w in context.warnings if w.code == code)
+        assert warning.message in rendered
+
+    guidance = next(line for line in rendered.splitlines() if "Aggregations: COUNT DISTINCT" in line)
+    for budget in (100, 501, 1500, 2500):
+        compact = context.to_context(max_chars=budget)
+        assert len(compact) <= budget
+        assert compact.endswith("[Context truncated.]")
+        if "Aggregations: COUNT DISTINCT" in compact:
+            assert guidance in compact.splitlines()
+        if "Aggregations: SUM · MEAN" in compact:
+            assert all("SUM only for additive quantities" in line for line in compact.splitlines()
+                       if "Aggregations: SUM · MEAN" in line)
 
 
 def test_aggregation_formatter_preserves_names_as_complete_values():
@@ -312,9 +343,33 @@ def test_categorical_serialization_respects_include_values():
     }
 
     opt_in_md = context.to_markdown(include_values=True)
-    assert "- Categories (all 2): free (2), pro (2)" in opt_in_md
+    assert '- Categories (all 2): "free" (2), "pro" (2)' in opt_in_md
     assert "- Top categories (top 2 of 3):" in opt_in_md
 
     opt_in_ctx = context.to_context(include_values=True)
-    assert "Categories (all 2): free (2), pro (2)" in opt_in_ctx
+    assert 'Categories (all 2): "free" (2), "pro" (2)' in opt_in_ctx
     assert "Top categories (top 2 of 3):" in opt_in_ctx
+
+
+def test_redaction_applies_to_categorical_context_subclasses():
+    class CustomCategories(CategoricalContext):
+        pass
+
+    context = inspect(pd.DataFrame({"tier": ["hidden-plan-a", "hidden-plan-b"] * 2}))
+    column = context.columns[0]
+    custom = CustomCategories(column.categories.values, column.categories.is_complete)
+    context = replace(context, columns=(replace(column, categories=custom),))
+
+    assert context.to_dict()["columns"][0]["categories"]["values"] == []
+    assert "hidden-plan-a" not in context.to_json()
+    assert "hidden-plan-a" in context.to_json(include_values=True)
+
+
+def test_text_category_values_distinguish_types_and_render_once():
+    labels = pd.Categorical([1, "1", " a, b ", "north\nwest"] * 2)
+    context = inspect(pd.DataFrame({"category": labels}))
+    for rendered in (context.to_markdown(include_values=True), context.to_context(include_values=True)):
+        categories = next(line for line in rendered.splitlines() if "Categories (all 4):" in line)
+        assert ': 1 (2), " a, b " (2), "1" (2)' in categories
+        assert "north" in categories and "west" in categories
+        assert "Local value samples:" not in rendered

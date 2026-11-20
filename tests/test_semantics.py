@@ -1,3 +1,5 @@
+import pytest
+
 from oribi import inspect
 
 
@@ -66,7 +68,7 @@ def test_short_numeric_measure_name_is_enough_for_measure_inference():
 def test_short_unique_integer_revenue_and_amount_are_measures():
     import pandas as pd
 
-    for name in ("revenue", "amount", "amount_percentile", "category_revenue", "bucket_amount", "revenue_by_category"):
+    for name in ("revenue", "amount", "sales", "net_profit", "category_revenue", "bucket_amount", "revenue_by_category"):
         context = inspect(pd.DataFrame({name: [10, 20, 35]}))
         column = context.columns[0]
         assert column.semantic.role == "measure"
@@ -80,29 +82,57 @@ def test_short_unique_integer_revenue_and_amount_are_measures():
     assert nullable.semantic.role == "measure"
 
 
-def test_repeated_integer_amount_band_keeps_dimension_role_and_relationships():
+@pytest.mark.parametrize("name", ["amount_band", "amount_band_v2", "revenue_bucket_version_3"])
+def test_repeated_integer_amount_band_keeps_dimension_role_and_relationships(name):
     import pandas as pd
 
     frame = pd.DataFrame({
         "order_id": [1, 2, 3, 4, 5, 6],
-        "amount_band": [1, 1, 2, 2, 3, 3],
+        name: [1, 1, 2, 2, 3, 3],
         "band_label": ["low", "low", "mid", "mid", "high", "high"],
     })
     context = inspect(frame)
-    band = next(c for c in context.columns if c.name == "amount_band")
+    band = next(c for c in context.columns if c.name == name)
     assert band.semantic.role == "dimension"
     evidence_codes = {e.code for e in band.semantic.evidence}
     assert "low_cardinality_numeric" in evidence_codes
     assert "name_measure_hint" not in evidence_codes
     assert any(rel.kind == "groups_observations" for rel in band.relationships)
     assert any(
-        rel.kind == "one_to_many" and rel.source_column == "amount_band" and rel.target_column == "order_id"
+        rel.kind == "one_to_many" and rel.source_column == name and rel.target_column == "order_id"
         for rel in context.relationships
     )
-    assert any(
-        rel.kind == "functional_dependency" and rel.source_column == "amount_band" and rel.target_column == "band_label"
-        for rel in context.relationships
-    )
+    source, target = sorted((name, "band_label"))
+    assert any(rel.kind == "functional_dependency" and rel.source_column == source and rel.target_column == target
+               for rel in context.relationships)
+
+
+@pytest.mark.parametrize(("name", "dtype"), [
+    ("amount_band_v2", "Int64"), ("amount_percentile", "Int64"),
+    ("profit_rank_v3", "Float64"), ("sales_category_code_v1", "Int64"),
+])
+def test_numeric_labels_and_ranks_do_not_acquire_measure_guidance(name, dtype):
+    import pandas as pd
+
+    # A percentile rank is an ordinal value, even when it includes "amount".
+    context = inspect(pd.DataFrame({name: pd.Series([10, 20, 35, None], dtype=dtype)}))
+    column = context.columns[0]
+    assert column.semantic.role in {"dimension", "identifier", "unknown"}
+    assert "name_measure_hint" not in {e.code for e in column.semantic.evidence}
+    assert not any(rel.kind == "measure_at_grain" for rel in column.relationships)
+    assert not any(rec.operation == "SUM" and rec.disposition != "not_applicable" for rec in column.recommendations)
+    for rendered in (context.to_markdown(), context.to_context()):
+        assert not any("SUM" in line for line in rendered.splitlines()
+                       if line.startswith(("- Recommended aggregations:", "Aggregations:")))
+
+
+def test_repeated_integer_measure_name_does_not_erase_grouping_evidence():
+    import pandas as pd
+
+    context = inspect(pd.DataFrame({"order_id": range(6), "amount": [1, 1, 2, 2, 3, 3]}))
+    column = context.columns[1]
+    assert column.semantic.role == "dimension"
+    assert any(rel.kind == "groups_observations" for rel in column.relationships)
 
 
 def test_identifier_precedence_and_misleading_substring_controls():
