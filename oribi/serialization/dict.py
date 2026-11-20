@@ -7,6 +7,8 @@ from dataclasses import fields, is_dataclass
 from datetime import date, datetime
 from typing import Any
 
+from ..models.evidence import CategoricalContext
+
 
 def _normalize(value: Any, include_values: bool = False, *, evidence_details: bool = False) -> Any:
     if is_dataclass(value):
@@ -14,7 +16,7 @@ def _normalize(value: Any, include_values: bool = False, *, evidence_details: bo
         for field in fields(value):
             if not include_values and (
                 field.name == "top_values"
-                or (type(value).__name__ == "CategoricalContext" and field.name == "values")
+                or (isinstance(value, CategoricalContext) and field.name == "values")
             ):
                 result[field.name] = []
             else:

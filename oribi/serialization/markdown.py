@@ -3,6 +3,9 @@
 import re
 from typing import Any
 
+from .aggregations import aggregation_conditions
+from .categories import format_categories
+
 _MARKDOWN_SPECIALS = re.compile(r"[\\`*\[\]<>~|]|(?<![0-9A-Za-z])_|_(?![0-9A-Za-z])")
 _LINE_BREAKS = re.compile(r"\s*[\r\n]+\s*")
 
@@ -134,21 +137,18 @@ def to_markdown(context: Any, *, include_values: bool = False) -> str:
                 )
         if include_values and (s.minimum is not None or s.maximum is not None):
             lines.append(f"- Range: {_md(s.minimum)} to {_md(s.maximum)}")
-        if include_values and s.top_values:
+        if include_values and col.categories is not None:
+            lines.append(f"- {format_categories(col.categories, s.distinct_count, escape=_md)}")
+        elif include_values and s.top_values:
             samples = ", ".join(f"{_md(value)} ({count})" for value, count in s.top_values)
             lines.append(f"- Local value samples: {samples}")
-        if include_values and col.categories is not None:
-            cats = col.categories
-            formatted = ", ".join(f"{_md(value)} ({count})" for value, count in cats.values)
-            if cats.is_complete:
-                lines.append(f"- Categories (all {s.distinct_count:,}): {formatted}")
-            else:
-                lines.append(f"- Top categories (top {len(cats.values):,} of {s.distinct_count:,}): {formatted}")
         aggregations = [
-            rec.operation for rec in col.recommendations
+            rec for rec in col.recommendations
             if rec.disposition in {"recommended", "caution"}
         ]
-        lines.append(f"- Recommended aggregations: {', '.join(aggregations) if aggregations else 'None'}")
+        operations = ", ".join(rec.operation for rec in aggregations) or "None"
+        conditions = aggregation_conditions(aggregations, col.semantic.role)
+        lines.append(f"- Recommended aggregations: {operations}{conditions}")
         useful = [
             rec.operation for rec in col.recommendations
             if rec.disposition == "useful"

@@ -1,13 +1,24 @@
 """Structured warnings and aggregation recommendations."""
 
 from ..models.evidence import Evidence, Recommendation, Warning
+from .semantic import column_name_words
+
+
+_NON_ADDITIVE_TOKENS = {
+    "average", "avg", "median", "per", "pct", "percent", "percentage", "percentages",
+    "proportion", "proportions", "rate", "rates", "ratio", "ratios", "share", "shares",
+}
 
 
 def reason_column(name: str, logical_type: str, semantic: object, stats: object, row_count: int) -> tuple[tuple[Recommendation, ...], tuple[Warning, ...]]:
     recommendations: list[Recommendation] = []
     warnings: list[Warning] = []
+    high_cardinality_text = logical_type == "text" and semantic.role != "identifier" and stats.distinct_count > 100
+    high_cardinality_category = logical_type == "categorical" and stats.distinct_count > 100
     if stats.missing_rate >= .2:
         warnings.append(Warning("high_missingness", "medium", "High missingness", f"{name} is missing {stats.missing_rate:.1%} of its values.", (Evidence("missing_rate", f"{stats.missing_count} of values are missing", {"missing_count": stats.missing_count, "missing_rate": stats.missing_rate}),), "Analyses using this column may exclude many rows.", "Check whether missing values have a meaningful interpretation."))
+    if stats.distinct_count == 0:
+        return (), tuple(warnings)
     if semantic.role == "identifier":
         is_repeated = stats.distinct_count < row_count - stats.missing_count
         if is_repeated:
@@ -20,8 +31,13 @@ def reason_column(name: str, logical_type: str, semantic: object, stats: object,
         if is_repeated:
             warnings.append(Warning("non_unique_identifier", "medium", "Identifier-like column is not unique", f"{name} has {stats.distinct_count} distinct values across rows and may identify repeated entities.", semantic.evidence, "Row counts measure record occurrences rather than unique entities; when identifiers repeat across rows, counting rows overcounts entities.", "Use COUNT DISTINCT when counting unique entities, as row counts and entity counts represent different measurements."))
     elif semantic.role == "measure":
-        recommendations.append(Recommendation("SUM", "recommended", "SUM is a reasonable starting point for additive quantities to measure total volume across observations.", semantic.evidence))
-        recommendations.append(Recommendation("MEAN", "recommended", "MEAN is a reasonable starting point for estimating typical values across observations when the distribution is relatively symmetric.", semantic.evidence))
+        if "%" in name or not _NON_ADDITIVE_TOKENS.isdisjoint(column_name_words(name)):
+            evidence = (*semantic.evidence, Evidence("name_non_additive_hint", "The name suggests a rate, ratio, or other derived measure"))
+            recommendations.append(Recommendation("SUM", "not_applicable", "Summing rates, ratios, or pre-aggregated measures across observations generally does not produce a meaningful total.", evidence))
+            recommendations.append(Recommendation("MEAN", "caution", "Check weighting and denominators before combining derived values. Recompute a combined rate or ratio from its underlying totals when available.", evidence))
+        else:
+            recommendations.append(Recommendation("SUM", "recommended", "SUM is a reasonable starting point for additive quantities to measure total volume across observations.", semantic.evidence))
+            recommendations.append(Recommendation("MEAN", "recommended", "MEAN is a reasonable starting point for estimating typical values across observations when the distribution is relatively symmetric.", semantic.evidence))
         recommendations.append(Recommendation("MEDIAN", "useful", "MEDIAN is useful for central tendency, especially when the distribution may be skewed or contain extreme values.", semantic.evidence))
         recommendations.append(Recommendation("MIN", "valid", "MIN is valid for observing lower bounds across observations.", semantic.evidence))
         recommendations.append(Recommendation("MAX", "valid", "MAX is valid for observing upper bounds across observations.", semantic.evidence))
@@ -29,7 +45,7 @@ def reason_column(name: str, logical_type: str, semantic: object, stats: object,
             warnings.append(Warning("high_skew", "low", "Highly skewed measure", f"{name} has skewness {stats.skewness:.2f}.", (Evidence("skewness", "Observed distribution is strongly skewed", {"skewness": stats.skewness}),), "The mean may be sensitive to a small number of large values.", "Consider reporting the median alongside the mean."))
         if stats.negative_count:
             warnings.append(Warning("negative_measure_values", "low", f"Negative values in {name}", f"{stats.negative_count} negative values were observed in likely measure {name}.", (Evidence("negative_count", f"{stats.negative_count} values are below zero", {"negative_count": stats.negative_count}),), "Negative values may represent refunds, reversals, or data issues.", "Check domain meaning before filtering negative values."))
-    elif semantic.role == "dimension":
+    elif semantic.role == "dimension" and not high_cardinality_text:
         recommendations.append(Recommendation(
             "GROUP BY",
             "recommended",
@@ -39,8 +55,9 @@ def reason_column(name: str, logical_type: str, semantic: object, stats: object,
     elif semantic.role == "categorical":
         recommendations.append(Recommendation(
             "GROUP BY",
-            "recommended",
-            "Grouping is useful for segmenting aggregations across categories.",
+            "caution" if high_cardinality_category else "recommended",
+            "Group only if many small groups are useful for the analysis."
+            if high_cardinality_category else "Grouping is useful for segmenting aggregations across categories.",
             semantic.evidence,
         ))
         recommendations.append(Recommendation(
@@ -49,9 +66,9 @@ def reason_column(name: str, logical_type: str, semantic: object, stats: object,
             "Counting distinct values is useful for measuring category cardinality or diversity.",
             semantic.evidence,
         ))
-    if logical_type == "categorical" and stats.distinct_count > 100:
+    if high_cardinality_category:
         warnings.append(Warning("high_cardinality_category", "low", "High-cardinality category", f"{name} has {stats.distinct_count} distinct categories.", (), "Grouping by this column may produce many small groups."))
-    if logical_type == "text" and semantic.role != "identifier" and stats.distinct_count > 100:
+    if high_cardinality_text:
         # Identifier-like text is expected to be near-unique; it has its own
         # non_unique_identifier handling instead.
         observed = row_count - stats.missing_count

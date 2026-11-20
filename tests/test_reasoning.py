@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from oribi import inspect
 
@@ -193,3 +194,63 @@ def test_aggregation_guidance_preserves_privacy():
     for exported in (context.to_json(), context.to_markdown(), context.to_context()):
         for secret in secrets:
             assert secret not in exported
+
+
+def test_grouping_advice_distinguishes_high_cardinality_text_and_categories():
+    labels = [f"segment{i:03d}" for i in range(120)] * 3
+    frame = pd.DataFrame({"text_segment": labels, "category_segment": pd.Categorical(labels)})
+    context = inspect(frame)
+    text, category = context.columns
+    assert text.semantic.role == "dimension"
+    assert any(w.code == "high_cardinality_text" for w in text.warnings)
+    assert not any(rec.operation == "GROUP BY" for rec in text.recommendations)
+    assert any(w.code == "high_cardinality_category" for w in category.warnings)
+    assert next(rec for rec in category.recommendations if rec.operation == "GROUP BY").disposition == "caution"
+    for rendered in (context.to_markdown(), context.to_context()):
+        assert rendered.count("GROUP BY") == 1
+        assert "group only if many small groups are useful" in rendered
+
+
+@pytest.mark.parametrize("name", ["conversion_rate", "price_per_unit", "profit ratio", "gross_margin (%)"])
+def test_non_additive_measures_render_their_restrictions(name):
+    context = inspect(pd.DataFrame({name: [0.15, 0.20, 0.25, 0.40]}))
+    ops = {rec.operation: rec for rec in context.columns[0].recommendations}
+    assert ops["SUM"].disposition == "not_applicable"
+    assert ops["MEAN"].disposition == "caution"
+    for rendered in (context.to_markdown(), context.to_context(), context.to_context(max_chars=420)):
+        assert "Inappropriate aggregations: SUM" in rendered
+        assert "check weighting and denominators before averaging" in rendered
+
+
+def test_pipeline_renders_composite_grain_and_measure_conditions():
+    rows = 36
+    frame = pd.DataFrame({
+        "account_id": [i // 6 for i in range(rows)],
+        "day": list(pd.date_range("2025-01-01", periods=6)) * (rows // 6),
+        "revenue": pd.Series([10 + 13 * i for i in range(rows - 1)] + [None], dtype="Int64"),
+        "amount_band_v2": [1 + (i // 4) % 3 for i in range(rows)],
+    })
+    context = inspect(frame)
+    assert set(context.grain.columns) == {"account_id", "day"}
+    assert "Likely grain:" in context.summary()
+    revenue, band = context.columns[2:]
+    assert revenue.semantic.role == "measure"
+    relationship = next(rel for rel in revenue.relationships if rel.kind == "measure_at_grain")
+    assert set(relationship.related_columns) == {"account_id", "day"}
+    assert band.semantic.role == "dimension"
+    assert {rec.operation for rec in band.recommendations} == {"GROUP BY"}
+    for rendered in (context.to_markdown(), context.to_context()):
+        assert "SUM only for additive quantities" in rendered
+        assert "MEAN for roughly symmetric values" in rendered
+        assert "Aggregations: GROUP BY" in rendered or "Recommended aggregations: GROUP BY" in rendered
+
+
+@pytest.mark.parametrize("values", [[], [None], [2.0]])
+def test_report_pipeline_accepts_empty_and_single_row_numeric_frames(values):
+    context = inspect(pd.DataFrame({"conversion_rate": pd.Series(values, dtype="Float64")}))
+    assert context.profile.row_count == len(values)
+    assert context.summary()
+    if not values or values[0] is None:
+        assert not context.columns[0].recommendations
+    for rendered in (context.to_markdown(), context.to_context()):
+        assert "Aggregations: SUM" not in rendered and "Recommended aggregations: SUM" not in rendered

@@ -40,9 +40,13 @@ def test_exact_bounds_and_tiny_numeric_summaries_require_opt_in():
 
 def test_markdown_renders_opt_in_samples_as_literal_text():
     sample = "<em>example</em>\n**second line**"
-    markdown = inspect(pd.DataFrame({"value": [sample]})).to_markdown(include_values=True)
+    markdown = inspect(pd.DataFrame({"record_id": [sample, "other"]})).to_markdown(include_values=True)
     assert "<em>" not in markdown
     assert r"- Local value samples: \<em\>example\</em\> \*\*second line\*\* (1)" in markdown
+
+    markdown = inspect(pd.DataFrame({"value": [sample]})).to_markdown(include_values=True)
+    assert "<em>" not in markdown
+    assert r'- Categories (all 1): "\<em\>example\</em\>\\n\*\*second line\*\*" (1)' in markdown
 
 
 def test_nested_evidence_strings_cannot_bypass_export_redaction():
@@ -285,13 +289,15 @@ def test_to_context_categorical_values_respect_max_chars_without_dropping_sectio
             "delta_long_category_name",
             "alpha_long_category_name",
         ],
-        "score": [10, 20, 30, 40, 50],
+        "z_measure": [10.0, 20.0, 30.0, 40.0, 50.0],
     })
     context = inspect(frame)
 
     full_ctx = context.to_context(max_chars=8000, include_values=True)
     assert "CARDINALITY" in full_ctx
     assert "Categories (all 4):" in full_ctx
+    measure_section = full_ctx.split("\nz_measure\n", 1)[1]
+    assert "Aggregation basis:" in measure_section
 
     without_categories = "\n".join(
         line for line in full_ctx.splitlines() if not line.startswith("Categories (")
@@ -303,3 +309,4 @@ def test_to_context_categorical_values_respect_max_chars_without_dropping_sectio
     assert "CARDINALITY" in tight_ctx
     assert "Categories (all 4):" not in tight_ctx
     assert "[Context truncated.]" not in tight_ctx
+    assert tight_ctx == without_categories
