@@ -282,6 +282,18 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
             fields.append((aggregation_line, f"\nAggregation basis: {' · '.join(basis[:2])}"))
         else:
             fields.append(aggregation_line)
+        useful = [
+            rec for rec in col.recommendations
+            if rec.disposition == "useful"
+        ]
+        if useful:
+            fields.append(f"Useful operations: {_format_aggregations(rec.operation for rec in useful)}")
+        inappropriate = [
+            rec for rec in col.recommendations
+            if rec.disposition == "not_applicable"
+        ]
+        if inappropriate:
+            fields.append(f"Inappropriate aggregations: {_format_aggregations(rec.operation for rec in inappropriate)}")
         if include_values and s.top_values:
             fields.append("Local value samples: " + ", ".join(f"{v} ({n})" for v, n in s.top_values))
         if include_values and col.categories is not None:
