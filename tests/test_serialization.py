@@ -1,8 +1,9 @@
 import json
+import pandas as pd
 
 import pytest
 
-from oribi import inspect
+from oribi import inspect, ProfileOptions
 from oribi.serialization.context import _format_aggregations, _format_range_value
 
 
@@ -279,3 +280,41 @@ def test_compact_context_preserves_timezone_offset_on_midnight_ranges():
     # Default compact output omits exact range
     assert "Range 2026-01-01" not in inspect(aware_df).to_context()
     assert "Range 2026-01-01" not in inspect(naive_df).to_context()
+
+
+def test_categorical_serialization_respects_include_values():
+    frame = pd.DataFrame({
+        "tier": ["free", "pro", "free", "pro"],
+        "plan": ["a", "b", "c", "a"],
+    })
+    context = inspect(frame, options=ProfileOptions(top_k=2))
+
+    default_dict = context.to_dict()
+    cols_default = {c["name"]: c for c in default_dict["columns"]}
+    assert cols_default["tier"]["categories"] == {"values": [], "is_complete": True}
+    assert cols_default["plan"]["categories"] == {"values": [], "is_complete": False}
+
+    default_md = context.to_markdown()
+    assert "Categories (" not in default_md
+    assert "Top categories (" not in default_md
+    assert "free" not in default_md
+
+    default_ctx = context.to_context()
+    assert "Categories (" not in default_ctx
+    assert "Top categories (" not in default_ctx
+    assert "free" not in default_ctx
+
+    opt_in_dict = context.to_dict(include_values=True)
+    cols_opt_in = {c["name"]: c for c in opt_in_dict["columns"]}
+    assert cols_opt_in["tier"]["categories"] == {
+        "values": [["free", 2], ["pro", 2]],
+        "is_complete": True,
+    }
+
+    opt_in_md = context.to_markdown(include_values=True)
+    assert "- Categories (all 2): free (2), pro (2)" in opt_in_md
+    assert "- Top categories (top 2 of 3):" in opt_in_md
+
+    opt_in_ctx = context.to_context(include_values=True)
+    assert "Categories (all 2): free (2), pro (2)" in opt_in_ctx
+    assert "Top categories (top 2 of 3):" in opt_in_ctx
