@@ -24,6 +24,15 @@ def test_unique_numeric_business_measure_stays_a_measure():
     assert {r.operation for r in column.recommendations} >= {"SUM", "MEAN", "MEDIAN"}
 
 
+def test_unique_integer_revenue_and_amount_stay_measures():
+    import pandas as pd
+
+    for name in ("revenue", "amount"):
+        column = inspect(pd.DataFrame({name: [10, 20, 35, 80]})).columns[0]
+        assert column.semantic.role == "measure"
+        assert "name_measure_hint" in {e.code for e in column.semantic.evidence}
+
+
 def test_numeric_identifier_name_outweighs_numeric_measure_type():
     import pandas as pd
 
@@ -52,3 +61,76 @@ def test_short_numeric_measure_name_is_enough_for_measure_inference():
 
     context = inspect(pd.DataFrame({"amount": [2.0, 4.5, 8.0]}))
     assert context.columns[0].semantic.role == "measure"
+
+
+def test_short_unique_integer_revenue_and_amount_are_measures():
+    import pandas as pd
+
+    for name in ("revenue", "amount", "amount_percentile", "category_revenue", "bucket_amount", "revenue_by_category"):
+        context = inspect(pd.DataFrame({name: [10, 20, 35]}))
+        column = context.columns[0]
+        assert column.semantic.role == "measure"
+        evidence_codes = {e.code for e in column.semantic.evidence}
+        assert "name_measure_hint" in evidence_codes
+        assert "low_cardinality_numeric" not in evidence_codes
+        assert {r.operation for r in column.recommendations} >= {"SUM", "MEAN", "MEDIAN"}
+        assert any(rel.kind == "measure_at_grain" for rel in column.relationships)
+
+    nullable = inspect(pd.DataFrame({"revenue": pd.Series([10, 20, 35, None], dtype="Int64")})).columns[0]
+    assert nullable.semantic.role == "measure"
+
+
+def test_repeated_integer_amount_band_keeps_dimension_role_and_relationships():
+    import pandas as pd
+
+    frame = pd.DataFrame({
+        "order_id": [1, 2, 3, 4, 5, 6],
+        "amount_band": [1, 1, 2, 2, 3, 3],
+        "band_label": ["low", "low", "mid", "mid", "high", "high"],
+    })
+    context = inspect(frame)
+    band = next(c for c in context.columns if c.name == "amount_band")
+    assert band.semantic.role == "dimension"
+    evidence_codes = {e.code for e in band.semantic.evidence}
+    assert "low_cardinality_numeric" in evidence_codes
+    assert "name_measure_hint" not in evidence_codes
+    assert any(rel.kind == "groups_observations" for rel in band.relationships)
+    assert any(
+        rel.kind == "one_to_many" and rel.source_column == "amount_band" and rel.target_column == "order_id"
+        for rel in context.relationships
+    )
+    assert any(
+        rel.kind == "functional_dependency" and rel.source_column == "amount_band" and rel.target_column == "band_label"
+        for rel in context.relationships
+    )
+
+
+def test_identifier_precedence_and_misleading_substring_controls():
+    import pandas as pd
+
+    for name in ("revenue_id", "amount_key", "amount_code"):
+        column = inspect(pd.DataFrame({name: [101, 102, 103, 104]})).columns[0]
+        assert column.semantic.role == "identifier"
+        assert "name_measure_hint" not in {e.code for e in column.semantic.evidence}
+
+    for name in ("amount_code", "store_code"):
+        column = inspect(pd.DataFrame({name: [101, 102, 103]})).columns[0]
+        assert column.semantic.role == "unknown"
+
+    low_diversity_id = inspect(pd.DataFrame({"revenue_id": [1, 2] * 50})).columns[0]
+    assert low_diversity_id.semantic.role == "dimension"
+
+    for name, values in (
+        ("paramount", [10, 20, 35, 80]),
+        ("amounted", [10, 20, 35, 80]),
+        ("nonrevenue", [10, 20, 35, 80]),
+        ("amount_band", [1, 2, 3, 4]),
+    ):
+        column = inspect(pd.DataFrame({name: values})).columns[0]
+        assert column.semantic.role == "unknown"
+
+    short_repeated = inspect(pd.DataFrame({"rating": [1, 1, 2]})).columns[0]
+    assert short_repeated.semantic.role == "dimension"
+
+    short_unnamed = inspect(pd.DataFrame({"rating": [1, 2, 3]})).columns[0]
+    assert short_unnamed.semantic.role == "dimension"

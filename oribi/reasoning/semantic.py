@@ -7,6 +7,9 @@ from ..models.evidence import Evidence, SemanticContext
 
 _MIN_ROLE_SCORE = 0.55
 _AMBIGUITY_MARGIN = 0.12
+_MEASURE_NAME_TOKENS = {"amount", "revenue"}
+_BUCKET_NAME_TOKENS = {"band", "bands", "bin", "bins", "bucket", "buckets", "category", "categories"}
+
 
 def infer_semantic(
     name: str,
@@ -21,9 +24,17 @@ def infer_semantic(
     lname = name.lower()
     distinct = stats.distinct_count
     rate = stats.distinct_rate
-    tokens = set(re.split(r"[^a-z0-9]+", lname))
+    words = re.findall(r"[a-z0-9]+", lname)
+    tokens = set(words)
     explicit_identifier_name = "id" in tokens or lname.endswith("_key")
     code_name = lname.endswith("_code")
+    bucket_name = (
+        len(words) >= 2 and words[-2] in _MEASURE_NAME_TOKENS and words[-1] in _BUCKET_NAME_TOKENS
+    )
+    measure_name = bool(tokens & _MEASURE_NAME_TOKENS) and not (bucket_name or explicit_identifier_name or code_name)
+    # A small sample of distinct measure values provides no evidence of reuse.
+    observed = row_count - stats.missing_count
+    unique_named_measure = measure_name and distinct > 1 and distinct == observed
     # A suffix alone cannot establish identity when only a few codes recur.
     categorical_code_shape = row_count >= 20 and distinct <= 3 and rate <= 0.15
     if explicit_identifier_name and distinct > 1:
@@ -55,6 +66,9 @@ def infer_semantic(
     if logical_type == "numeric":
         votes["measure"] = .48
         evidence.append(Evidence("numeric_type", "Column has a numeric dtype"))
+        if measure_name:
+            votes["measure"] = max(votes["measure"], .56)
+            evidence.append(Evidence("name_measure_hint", "Column name supports a quantitative measure"))
         if is_float:
             votes["measure"] = max(votes["measure"], .56)
             evidence.append(Evidence("floating_point_type", "Floating-point values are consistent with a quantitative measure"))
@@ -77,7 +91,7 @@ def infer_semantic(
         else:
             votes["dimension"] = .62
             evidence.append(Evidence("text_dimension", "Text values are reusable across rows"))
-    if logical_type == "numeric" and not is_float and (
+    if logical_type == "numeric" and not is_float and not unique_named_measure and (
         distinct <= min(20, max(3, row_count // 10))
         or (row_count >= 20 and rate <= .1)
     ):
