@@ -142,6 +142,12 @@ def to_markdown(context: Any, *, include_values: bool = False) -> str:
             if rec.disposition in {"recommended", "caution"}
         ]
         lines.append(f"- Recommended aggregations: {', '.join(aggregations) if aggregations else 'None'}")
+        inappropriate = [
+            rec.operation for rec in col.recommendations
+            if rec.disposition == "not_applicable"
+        ]
+        if inappropriate:
+            lines.append(f"- Inappropriate aggregations: {', '.join(inappropriate)}")
         if col.warnings:
             # The message, implication and suggestion are printed once, under
             # "Analytical warnings"; the column keeps a pointer to each warning.
