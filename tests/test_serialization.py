@@ -577,3 +577,10 @@ def test_truncated_context_keeps_separate_temporal_gaps_visible():
 
     assert len(rendered) <= 700
     assert rendered.count("has a possible temporal gap") == 2
+
+
+def test_summary_lists_each_separate_temporal_gap():
+    summary = inspect(_frame_with_two_temporal_gaps()).summary()
+
+    assert "2 analytical warning(s) detected." in summary
+    assert summary.count("has a possible temporal gap") == 2
