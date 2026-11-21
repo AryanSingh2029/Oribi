@@ -535,3 +535,45 @@ def test_to_context_accepts_minimum_and_numpy_integer_budgets():
         (np.int64(8000), 8000),
     ):
         assert context.to_context(max_chars=numpy_budget) == context.to_context(max_chars=python_budget)
+
+
+def _frame_with_two_temporal_gaps(extra=None):
+    import pandas as pd
+
+    dates = pd.date_range("2026-01-01", periods=12, freq="D")
+    observed = dates[[i for i in range(12) if i not in (3, 7)]]
+    data = {"observed_at": observed}
+    if extra:
+        data.update(extra)
+    return pd.DataFrame(data)
+
+
+def test_compact_context_keeps_separate_temporal_gaps_visible():
+    context = inspect(_frame_with_two_temporal_gaps())
+
+    assert len([w for w in context.warnings if w.code == "potential_temporal_gap"]) == 2
+    assert context.to_context().count("has a possible temporal gap") == 2
+
+
+def test_compact_context_still_shows_an_ordinary_warning_once():
+    amount = [-1.0, 2, 3, -4, 5, 6, 7, 8, 9, 10]
+    context = inspect(_frame_with_two_temporal_gaps({"amount": amount}))
+    warning = next(w for w in context.warnings if w.code == "negative_measure_values")
+
+    assert context.to_context().count(warning.message) == 1
+
+
+def test_compact_context_does_not_expose_temporal_gap_dates():
+    rendered = inspect(_frame_with_two_temporal_gaps()).to_context()
+
+    assert "2026-01-04" not in rendered
+    assert "2026-01-08" not in rendered
+
+
+def test_truncated_context_keeps_separate_temporal_gaps_visible():
+    context = inspect(_frame_with_two_temporal_gaps())
+
+    rendered = context.to_context(max_chars=700)
+
+    assert len(rendered) <= 700
+    assert rendered.count("has a possible temporal gap") == 2
