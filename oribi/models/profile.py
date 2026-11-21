@@ -36,6 +36,7 @@ class DatasetProfile:
     duplicate_row_count: int | None
     duplicate_row_rate: float | None
     index: "IndexContext | None" = None
+    exact_row_limit_exceeded: bool = False
 
 
 @dataclass(frozen=True)

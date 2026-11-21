@@ -13,7 +13,7 @@ _NON_ADDITIVE_TOKENS = {
 def reason_column(name: str, logical_type: str, semantic: SemanticContext, stats: StatisticsContext, row_count: int) -> tuple[tuple[Recommendation, ...], tuple[Warning, ...]]:
     recommendations: list[Recommendation] = []
     warnings: list[Warning] = []
-    high_cardinality_text = logical_type == "text" and semantic.role != "identifier" and stats.distinct_count > 100
+    high_cardinality_text = logical_type == "text" and semantic.role not in {"identifier", "temporal"} and stats.distinct_count > 100
     high_cardinality_category = logical_type == "categorical" and stats.distinct_count > 100
     if stats.missing_rate >= .2:
         warnings.append(Warning("high_missingness", "medium", "High missingness", f"{name} is missing {stats.missing_rate:.1%} of its values.", (Evidence("missing_rate", f"{stats.missing_count} of values are missing", {"missing_count": stats.missing_count, "missing_rate": stats.missing_rate}),), "Analyses using this column may exclude many rows.", "Check whether missing values have a meaningful interpretation."))

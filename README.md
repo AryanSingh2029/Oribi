@@ -32,7 +32,7 @@ print(context.summary())
 print(context.to_context(max_chars=2_000))
 ```
 
-`summary()` returns the row and column counts. It also reports a non-zero duplicate-row count, whether a likely grain was estimated or left undetermined, and the warning count when warnings were recorded. It takes no arguments and does not list column values. `to_context()` creates a compact representation that you can include in an AI prompt.
+`summary()` reports the dataset shape, likely grain, duplicate-row and warning counts when present, and up to three distinct warning messages in severity order. It takes no arguments and omits sampled values. `to_context()` creates a compact representation that you can include in an AI prompt.
 
 ## What Oribi reports
 
@@ -47,6 +47,8 @@ The capabilities in this section are implemented in the current release. Oribi r
 | Relationships | Observed value relationships within the same DataFrame |
 | Analysis guidance | Aggregation recommendations for likely measures, identifier counts, dimensions, and categories |
 | Warnings | Duplicate rows, missingness, non-unique identifiers, negative or highly skewed measures, high-cardinality categories and text, and possible gaps in regular datetime series |
+
+The `column.cardinality.constancy` field marks a column as constant when at least two non-missing observations share one value. A near-constant column has one value in at least 95% of non-missing rows and at least one exception. The evidence reports counts without including the dominant value. Ambiguous object equality and string-based counting fallbacks do not establish constancy.
 
 A dimension role is a current inference for reusable low-cardinality values, including some numeric columns. A temporal-gap warning is also current, and only when a datetime column supports a regular cadence. Oribi does not flag individual outlier rows.
 
@@ -116,7 +118,7 @@ Options include `top_k`, `include_quantiles`, `max_exact_rows`, `max_key_columns
 
 `max_exact_rows` is an inclusive row-count limit on numeric quantiles, composite-key pair scans, and observed relationship scans. At or below the limit, each calculation also depends on its own options and on eligible input. Above the limit, quantiles are omitted, composite-key pairs are skipped, and the observed relationship collection is empty. Single-column observations, cardinalities, and semantic inference still run.
 
-Use `context.profile.row_count` and the configured limit to tell when these calculations were skipped by the limit. If the grain also remains undetermined, its evidence reports `key_search_bounded` above the limit. An empty quantile mapping or observed relationship collection alone cannot show whether a calculation ran.
+Check `context.profile.exact_row_limit_exceeded` (also present in dictionary and JSON exports) to identify when the row limit skipped those calculations. A false value means the row limit did not skip them. Individual options and eligibility can still produce empty results. When the grain remains undetermined above the limit, its evidence reports `key_search_bounded`.
 
 ## How to interpret the results
 
@@ -125,6 +127,7 @@ Oribi uses deterministic heuristics based on observed values, data types, and su
 - A candidate key with `verified_unique=True` has no observed collisions or null components. Approximate candidates can have collisions or missing values. A verified candidate still needs domain validation before it can be used as a business key.
 - A likely grain describes a pattern in the observed rows. It can remain undetermined when the evidence is weak or ambiguous.
 - A relationship within one DataFrame does not prove that a join to another table is valid or safe.
+- An exact functional dependency points from the determining column to the dependent column. Its `mapping_cardinality` distinguishes many-to-one from one-to-one. One-to-many links point from group to entity and require a verified entity key. Mapping coverage is the fraction of observed determinant values with exactly one partner. For one-to-many links the entity is the determinant, so coverage is measured from the target back to the source. Missing pairs or conflicting partners cannot establish an exact dependency.
 - Confidence scores describe heuristic strength. They are not calibrated probabilities.
 
 Use the profile as evidence for further analysis, and check whether each inference fits the dataset's actual domain.
@@ -135,7 +138,8 @@ Oribi currently works with in memory pandas DataFrames. It does not connect to d
 
 - Python 3.10–3.14 and pandas 1.5.3 or newer, below pandas 4. Use NumPy 1.x with pandas 1.5.3.
 - Column labels must be unique strings.
-- Datetime like text is not parsed automatically.
+- Consistent ISO calendar dates or timestamps in text and Python date or datetime objects can support a temporal role. Text requires at least two distinct non-missing values, and every distinct string must be valid. Oribi preserves the stored dtype and values. Convert the column to a pandas datetime dtype to use it for datetime bounds, gap checks, or structural inference.
+- Object logical-type detection checks all observed values, including values after the first 100 rows. This check still runs above `max_exact_rows`.
 - Native complex valued columns are unsupported and raise `InvalidInputError`.
 - Profiling may require several full column scans. Exact composite key and relationship checks are bounded by configured row and column limits.
 - If pandas cannot compare cell values, the duplicate-row count is omitted and Oribi records a `duplicate_check_unavailable` warning.
