@@ -6,7 +6,7 @@ from decimal import Decimal
 from fractions import Fraction
 from heapq import nsmallest
 from itertools import groupby
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -91,11 +91,11 @@ def _top_values(counts: pd.Series, limit: int) -> tuple[tuple[Any, int], ...]:
 
     # There are usually few distinct frequencies even for very wide ties.
     frequencies = counts.value_counts(sort=False).sort_index(ascending=False)
-    cutoff = frequencies.index[frequencies.cumsum().searchsorted(limit)]
+    cutoff = frequencies.index[int(frequencies.cumsum().searchsorted(limit))]
     if cutoff == 0:
         return _top_values(counts[counts > 0], limit)
 
-    ranked = []
+    ranked: list[tuple[Any, int]] = []
     ties = counts.index
     if len(frequencies) > 1:
         leaders = counts[counts > cutoff].sort_values(ascending=False, kind="stable")
@@ -117,9 +117,16 @@ def profile_column(obs: ColumnObservation, row_count: int, top_k: int, include_q
     non_null = s.dropna()
     values: dict[str, Any] = {}
     if obs.logical_type == "numeric" and len(non_null):
-        numeric = pd.to_numeric(non_null, errors="coerce").dropna()
+        numeric_series = (
+            cast(Any, non_null).sparse.to_dense()
+            if isinstance(non_null.dtype, pd.SparseDtype)
+            else non_null
+        )
+        numeric = pd.to_numeric(numeric_series, errors="coerce").dropna()
         if len(numeric):
             def finite_or_none(value: Any) -> float | None:
+                if pd.isna(value):
+                    return None
                 result = float(value)
                 return result if math.isfinite(result) else None
 
@@ -139,16 +146,19 @@ def profile_column(obs: ColumnObservation, row_count: int, top_k: int, include_q
             values["zero_count"] = int((numeric == 0).sum())
             values["negative_count"] = int((numeric < 0).sum())
             if include_quantiles:
-                qs = finite.quantile([.25, .5, .75]) if len(finite) else {}
-                values["quantiles"] = {str(q): finite_or_none(v) for q, v in qs.items()}
+                values["quantiles"] = (
+                    {str(q): finite_or_none(v) for q, v in finite.quantile([.25, .5, .75]).items()}
+                    if len(finite) else {}
+                )
             if len(finite) >= 3 and finite.nunique() > 1:
-                skew = float(finite.skew())
+                skew_raw: Any = finite.skew()
+                skew = float(skew_raw)
                 values["skewness"] = skew if pd.notna(skew) else None
     elif obs.logical_type == "temporal" and len(non_null):
         values["minimum"] = non_null.min()
         values["maximum"] = non_null.max()
         values["date_range"] = f"{values['minimum']} to {values['maximum']}"
-    if len(non_null) and (obs.logical_type in {"text", "categorical", "boolean", "unknown", "duration"} or obs.distinct_count <= top_k * 4):
+    if top_k > 0 and len(non_null) and (obs.logical_type in {"text", "categorical", "boolean", "unknown", "duration"} or obs.distinct_count <= top_k * 4):
         try:
             counts = non_null.value_counts(sort=False, dropna=True)
         except (TypeError, ValueError):

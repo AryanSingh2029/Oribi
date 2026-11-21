@@ -3,7 +3,7 @@
 import re
 
 from ..models.evidence import Evidence, SemanticContext
-
+from ..models.profile import StatisticsContext
 
 _MIN_ROLE_SCORE = 0.55
 _AMBIGUITY_MARGIN = 0.12
@@ -19,12 +19,16 @@ _LABEL_NAME_TOKENS = {
 _SUBJECT_NAME_TOKENS = _MEASURE_NAME_TOKENS | _LABEL_NAME_TOKENS
 _RANK_NAME_TOKENS = {"rank", "ranks", "ranking", "percentile", "percentiles", "quantile", "quantiles", "decile", "deciles"}
 _SOFT_IDENTIFIER_SUFFIX_TOKENS = {"no", "num", "number"}
+_CAMEL_BOUNDARY_UPPER = re.compile(r"([A-Z]+)([A-Z][a-z])")
+_CAMEL_BOUNDARY_LOWER = re.compile(r"([a-z0-9])([A-Z])")
 _NAME_WORD = re.compile(r"[a-z0-9]+")
 _VERSION_SUFFIX = re.compile(r"(?<=[^a-z0-9])v(?:er(?:sion)?)?[^a-z0-9]*[0-9]+$")
 
 
 def column_name_words(name: str) -> list[str]:
-    normalized = name.lower()
+    segmented = _CAMEL_BOUNDARY_UPPER.sub(r"\1 \2", str(name))
+    segmented = _CAMEL_BOUNDARY_LOWER.sub(r"\1 \2", segmented)
+    normalized = segmented.lower()
     if normalized[-1:].isdigit():
         normalized = _VERSION_SUFFIX.sub("", normalized)
     return _NAME_WORD.findall(normalized)
@@ -33,10 +37,11 @@ def column_name_words(name: str) -> list[str]:
 def infer_semantic(
     name: str,
     logical_type: str,
-    stats: object,
+    stats: StatisticsContext,
     row_count: int,
     *,
     is_float: bool = False,
+    date_evidence: Evidence | None = None,
 ) -> SemanticContext:
     votes: dict[str, float] = {}
     evidence: list[Evidence] = []
@@ -166,6 +171,9 @@ def infer_semantic(
     elif logical_type == "temporal":
         votes["temporal"] = .86
         evidence.append(Evidence("datetime_dtype", "Column has a datetime dtype"))
+    elif date_evidence is not None:
+        votes["temporal"] = .84
+        evidence.append(date_evidence)
     elif logical_type == "boolean":
         votes["boolean"] = .9
         evidence.append(Evidence("boolean_dtype", "Column has a boolean dtype"))

@@ -1,7 +1,9 @@
-"""Conservative temporal cadence and gap observations."""
+"""Conservative observations of calendar values and temporal cadence."""
 
+import re
 from collections import Counter
 from dataclasses import replace
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -10,6 +12,50 @@ from ..models.evidence import Evidence, Warning
 _MIN_UNIQUE_TIMESTAMPS = 4
 _MIN_CADENCE_INTERVALS = 2
 _MIN_CADENCE_SHARE = 0.6
+_ISO_CALENDAR_VALUE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
+    r"(?:[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2}(?P<fraction>\.[0-9]{1,9})?)?"
+    r"(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])?)?"
+)
+
+
+def _valid_iso_calendar_value(value: str) -> bool:
+    match = _ISO_CALENDAR_VALUE.fullmatch(value)
+    if match is None:
+        return False
+    # The regex validates fractions; remove them for Python 3.10 compatibility.
+    if match.group("fraction"):
+        start, end = match.span("fraction")
+        value = value[:start] + value[end:]
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def date_like_evidence(values: pd.Series, kind: str, distinct_count: int) -> Evidence | None:
+    """Recognize calendar values without converting their stored representation."""
+    if values.empty:
+        return None
+    details = {"observed_count": len(values), "distinct_count": distinct_count}
+    first = values.iloc[0]
+    if kind == "string":
+        if distinct_count < 2 or not _valid_iso_calendar_value(first):
+            return None
+        try:
+            distinct_values = values.unique()
+        except (TypeError, ValueError):
+            return None
+        if all(_valid_iso_calendar_value(value) for value in distinct_values):
+            return Evidence("iso_temporal_values", "All distinct non-missing strings are ISO dates or timestamps", details)
+    elif kind in {"date", "datetime", "datetime64"} or (
+        isinstance(first, date) and all(isinstance(value, date) for value in values)
+    ):
+        return Evidence("temporal_object_values", "All non-missing values are date or datetime objects", details)
+    return None
 
 
 def temporal_gap_warnings(series: pd.Series, column_name: str, *, max_examples: int = 3,

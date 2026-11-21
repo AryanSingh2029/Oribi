@@ -1,7 +1,8 @@
 """Conservative within-frame column dependency detection."""
 
-import pandas as pd
 import math
+
+import pandas as pd
 
 from ..models.evidence import (
     CardinalityContext,
@@ -153,10 +154,10 @@ def infer_column_relationships(
             ))
 
     for name, cardinality in cardinalities.items():
-        semantic = semantics[name]
+        col_semantic = semantics[name]
         coverage = cardinality.observed_count / cardinality.row_count if cardinality.row_count else 0.0
         generalization = _generalization_support(cardinality.observed_count)
-        if semantic.role == "measure":
+        if col_semantic.role == "measure":
             # A measure can only be attached to a named grain when that grain
             # has meaningful sample support. Otherwise its observed level is
             # simply the row, and attaching it to a coincidentally unique
@@ -168,13 +169,13 @@ def infer_column_relationships(
                 and cardinality.row_count >= 20
                 else ()
             )
-            evidence = Evidence(
+            col_evidence = Evidence(
                 "numeric_measure_at_observation_grain",
                 f"numeric column observed across {cardinality.observed_count} non-missing rows",
                 {"observed_count": cardinality.observed_count, "grain": supported_grain},
             )
             confidence, components = _score(
-                {"numeric_type": 1.0, "semantic_support": semantic.confidence,
+                {"numeric_type": 1.0, "semantic_support": col_semantic.confidence,
                  "coverage": coverage, "generalization": generalization},
                 {"numeric_type": 0.45, "semantic_support": 0.20,
                  "coverage": 0.20, "generalization": 0.15},
@@ -182,19 +183,19 @@ def infer_column_relationships(
             add(name, ColumnRelationshipContext(
                 "measure_at_grain",
                 confidence,
-                (evidence,),
+                (col_evidence,),
                 supported_grain,
                 coverage,
                 confidence_components=components,
             ))
         elif logical_types[name] == "temporal":
-            evidence = Evidence(
+            col_evidence = Evidence(
                 "temporal_observation_attribute",
                 f"datetime-typed column with {cardinality.observed_count} non-missing values",
                 {"observed_count": cardinality.observed_count, "missing_count": cardinality.row_count - cardinality.observed_count},
             )
             confidence, components = _score(
-                {"datetime_type": 1.0, "semantic_support": semantic.confidence,
+                {"datetime_type": 1.0, "semantic_support": col_semantic.confidence,
                  "coverage": coverage, "generalization": generalization},
                 {"datetime_type": 0.55, "semantic_support": 0.10,
                  "coverage": 0.20, "generalization": 0.15},
@@ -202,16 +203,16 @@ def infer_column_relationships(
             add(name, ColumnRelationshipContext(
                 "temporal_attribute",
                 confidence,
-                (evidence,),
+                (col_evidence,),
                 grain.columns,
                 coverage,
                 confidence_components=components,
             ))
-        elif semantic.role in {"dimension", "categorical", "boolean"}:
+        elif col_semantic.role in {"dimension", "categorical", "boolean"}:
             ratio = cardinality.uniqueness_ratio or 0.0
             has_group_relation = any(rel.kind == "groups_observations" for rel in inferred[name])
             if cardinality.unique_count > 0 and ratio < 1 and not has_group_relation:
-                evidence = Evidence(
+                col_evidence = Evidence(
                     "reusable_values_across_observations",
                     f"{cardinality.unique_count} observed values reused across {cardinality.observed_count} rows",
                     {
@@ -231,14 +232,14 @@ def infer_column_relationships(
                 add(name, ColumnRelationshipContext(
                     "groups_observations",
                     confidence,
-                    (evidence,),
+                    (col_evidence,),
                     evidence_strength=1 - ratio,
                     confidence_components=components,
                 ))
-        elif semantic.role == "identifier" and cardinality.unique_count > 1:
+        elif col_semantic.role == "identifier" and cardinality.unique_count > 1:
             ratio = cardinality.uniqueness_ratio or 0.0
             if ratio < 1:
-                evidence = Evidence(
+                col_evidence = Evidence(
                     "repeated_identifier_values",
                     f"{cardinality.unique_count} identifier-like values reused across {cardinality.observed_count} rows",
                     {"unique_count": cardinality.unique_count, "observed_count": cardinality.observed_count, "uniqueness_ratio": ratio},
@@ -246,14 +247,14 @@ def infer_column_relationships(
                 confidence, components = _score(
                     {"reuse": 1 - ratio, "coverage": coverage,
                      "generalization": generalization,
-                     "semantic_support": semantic.confidence},
+                     "semantic_support": col_semantic.confidence},
                     {"reuse": 0.50, "coverage": 0.20,
                      "generalization": 0.15, "semantic_support": 0.15},
                 )
                 add(name, ColumnRelationshipContext(
                     "groups_observations",
                     confidence,
-                    (evidence,),
+                    (col_evidence,),
                     evidence_strength=1 - ratio,
                     confidence_components=components,
                 ))
@@ -275,7 +276,12 @@ def detect_relationships(
     with each entity mapping to one repeated group value. Column names do not
     establish a relationship.
     """
-    if len(frame) == 0 or len(frame) > max_rows or max_relationships == 0:
+    if (
+        len(frame) == 0
+        or len(frame) > max_rows
+        or max_relationships <= 0
+        or max_relationship_columns <= 0
+    ):
         return ()
     search_columns = min(max_relationship_columns, max(8, math.ceil(math.sqrt(max_relationships * 4))))
     eligible_sources = [
@@ -286,7 +292,9 @@ def detect_relationships(
     max_distinct = min(500, max(20, len(frame) // 2))
     eligible_sources = [name for name in eligible_sources if _nunique(frame[name]) <= max_distinct]
     eligible_targets = [name for name in eligible_targets if _nunique(frame[name]) <= max_distinct]
-    rank = lambda name: (_nunique(frame[name]), name)
+    def rank(name: str) -> tuple[int, str]:
+        return (_nunique(frame[name]), name)
+
     eligible_sources = sorted(eligible_sources, key=rank)[:search_columns]
     eligible_targets = sorted(eligible_targets, key=rank)[:search_columns]
     results: list[RelationshipContext] = []
@@ -305,7 +313,7 @@ def detect_relationships(
             if source_values >= source_observed:
                 # A unique determinant maps trivially to every row-level value.
                 continue
-            mapping_counts = pairs.groupby(source, dropna=True)[target].nunique()
+            mapping_counts = pairs.groupby(source, dropna=True, observed=True, sort=False)[target].nunique()
             unique_mapping = int(mapping_counts.eq(1).sum())
             coverage = unique_mapping / source_values
             affected_groups = int(mapping_counts.gt(1).sum())
@@ -314,6 +322,7 @@ def detect_relationships(
             missing_pairs = len(frame) - paired_rows
             target_values = _nunique(frame[target])
             if coverage >= .98 and target_values > 1:
+                exact_mapping = unique_mapping == source_values and not violations and not missing_pairs
                 repeated_fraction = max(0.0, (source_observed - source_values) / source_observed)
                 confidence, components = _score(
                     {"mapping_coverage": coverage, "repeated_determinant_support": repeated_fraction,
@@ -323,7 +332,7 @@ def detect_relationships(
                 )
                 results.append(RelationshipContext(
                     source, target,
-                    "functional_dependency" if not violations and not missing_pairs else "approximate_mapping",
+                    "functional_dependency" if exact_mapping else "approximate_mapping",
                     coverage,
                     confidence,
                     (Evidence("value_mapping", f"{coverage:.1%} of observed {source} values map to one {target} value", {"source_distinct": int(source_values), "target_distinct": int(target_values), "coverage": coverage, "violation_count": violations, "affected_groups": affected_groups, "paired_row_count": paired_rows, "missing_pair_count": missing_pairs}),),
@@ -332,6 +341,9 @@ def detect_relationships(
                     affected_groups=affected_groups,
                     paired_row_count=paired_rows,
                     missing_pair_count=missing_pairs,
+                    mapping_cardinality=(
+                        "one_to_one" if source_values == target_values else "many_to_one"
+                    ) if exact_mapping else None,
                 ))
     dependency_edges = {
         (relation.source_column, relation.target_column): relation
@@ -347,9 +359,8 @@ def detect_relationships(
         if reverse is None or pair in known_one_to_one:
             continue
         forward_details = forward.evidence[0].details
-        reverse_details = reverse.evidence[0].details
         distinct = forward_details.get("source_distinct")
-        if distinct != forward_details.get("target_distinct"):
+        if not isinstance(distinct, int) or distinct != forward_details.get("target_distinct"):
             continue
         if (
             distinct >= int(frame[source].notna().sum())
@@ -379,6 +390,8 @@ def detect_relationships(
                 {"distinct_values": distinct, "coverage": coverage},
             ),),
             confidence_components=components,
+            paired_row_count=forward.paired_row_count,
+            mapping_cardinality="one_to_one",
         ))
         known_one_to_one.add(pair)
     # Repeated group values mapping uniquely to observed entity keys support
@@ -412,11 +425,11 @@ def detect_relationships(
                 continue
             if pairs.empty:
                 continue
-            entity_group_counts = pairs.groupby(entity, dropna=True)[group].nunique()
+            entity_group_counts = pairs.groupby(entity, dropna=True, observed=True, sort=False)[group].nunique()
             coverage = float(entity_group_counts.eq(1).sum() / entity_count)
             if coverage < 1.0:
                 continue
-            per_group = pairs.groupby(group, dropna=True)[entity].nunique()
+            per_group = pairs.groupby(group, dropna=True, observed=True, sort=False)[entity].nunique()
             if per_group.empty or int(per_group.max()) <= 1:
                 continue
             group_reuse = max(0.0, (entity_count - group_count) / entity_count)
@@ -452,6 +465,7 @@ def detect_relationships(
                 confidence_components=components,
                 paired_row_count=paired_rows,
                 missing_pair_count=missing_pairs,
+                mapping_cardinality="one_to_many",
             ))
 
     # Keep a deterministic orientation for two-way functional dependencies.

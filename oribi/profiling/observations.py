@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
 from ..exceptions import InvalidInputError
+from ..models.evidence import Evidence
+from .temporal import date_like_evidence
 
 if TYPE_CHECKING:
     from ..api import ProfileOptions
@@ -22,6 +23,7 @@ class ColumnObservation:
     distinct_count: int
     logical_type: str
     stats: dict[str, Any] = field(default_factory=dict)
+    date_evidence: Evidence | None = None
 
 
 class AnalysisSession:
@@ -47,6 +49,7 @@ class AnalysisSession:
             distinct = int(series.nunique(dropna=True))
         except (TypeError, ValueError):
             distinct = int(series.dropna().astype(str).nunique())
+        date_evidence = None
         if pd.api.types.is_bool_dtype(series.dtype):
             logical = "boolean"
         elif pd.api.types.is_datetime64_any_dtype(series.dtype):
@@ -58,18 +61,31 @@ class AnalysisSession:
             logical = "duration"
         elif isinstance(series.dtype, pd.CategoricalDtype):
             logical = "categorical"
+        elif isinstance(series.dtype, pd.PeriodDtype):
+            # Native Period columns represent calendar intervals rather than
+            # point timestamps or entity identifiers.
+            logical = "unknown"
+            date_evidence = Evidence(
+                "period_dtype",
+                "Column has a pandas Period dtype",
+                {"dtype": str(series.dtype)},
+            )
         elif series.dtype == object or pd.api.types.is_string_dtype(series.dtype):
             values = series.dropna()
-            kinds = {type(v) for v in values.iloc[:100]}
-            logical = "unknown" if len(kinds) > 1 and len({"str" if issubclass(t, str) else t.__name__ for t in kinds}) > 1 else "text"
-            if values.empty:
+            kind = "empty" if values.empty else pd.api.types.infer_dtype(values, skipna=False)
+            if kind == "empty":
                 logical = "unknown"
-            elif pd.api.types.infer_dtype(values, skipna=True) in {
-                "integer", "floating", "mixed-integer-float"
-            }:
+            elif kind in {"integer", "floating", "mixed-integer-float"}:
                 logical = "numeric"
+            elif kind == "string":
+                logical = "text"
+            else:
+                first_type = type(values.iloc[0])
+                logical = "text" if all(type(value) is first_type for value in values) else "unknown"
+            if logical in {"text", "unknown"}:
+                date_evidence = date_like_evidence(values, kind, distinct)
         else:
             logical = "unknown"
-        obs = ColumnObservation(str(name), series, missing, distinct, logical)
+        obs = ColumnObservation(str(name), series, missing, distinct, logical, date_evidence=date_evidence)
         self.observations[name] = obs
         return obs

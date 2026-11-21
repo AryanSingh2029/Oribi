@@ -1,8 +1,8 @@
 """Structured warnings and aggregation recommendations."""
 
-from ..models.evidence import Evidence, Recommendation, Warning
+from ..models.evidence import Evidence, Recommendation, SemanticContext, Warning
+from ..models.profile import StatisticsContext
 from .semantic import column_name_words
-
 
 _NON_ADDITIVE_TOKENS = {
     "average", "avg", "median", "per", "pct", "percent", "percentage", "percentages",
@@ -10,10 +10,10 @@ _NON_ADDITIVE_TOKENS = {
 }
 
 
-def reason_column(name: str, logical_type: str, semantic: object, stats: object, row_count: int) -> tuple[tuple[Recommendation, ...], tuple[Warning, ...]]:
+def reason_column(name: str, logical_type: str, semantic: SemanticContext, stats: StatisticsContext, row_count: int) -> tuple[tuple[Recommendation, ...], tuple[Warning, ...]]:
     recommendations: list[Recommendation] = []
     warnings: list[Warning] = []
-    high_cardinality_text = logical_type == "text" and semantic.role != "identifier" and stats.distinct_count > 100
+    high_cardinality_text = logical_type == "text" and semantic.role not in {"identifier", "temporal"} and stats.distinct_count > 100
     high_cardinality_category = logical_type == "categorical" and stats.distinct_count > 100
     if stats.missing_rate >= .2:
         warnings.append(Warning("high_missingness", "medium", "High missingness", f"{name} is missing {stats.missing_rate:.1%} of its values.", (Evidence("missing_rate", f"{stats.missing_count} of values are missing", {"missing_count": stats.missing_count, "missing_rate": stats.missing_rate}),), "Analyses using this column may exclude many rows.", "Check whether missing values have a meaningful interpretation."))
@@ -42,7 +42,16 @@ def reason_column(name: str, logical_type: str, semantic: object, stats: object,
         recommendations.append(Recommendation("MIN", "valid", "MIN is valid for observing lower bounds across observations.", semantic.evidence))
         recommendations.append(Recommendation("MAX", "valid", "MAX is valid for observing upper bounds across observations.", semantic.evidence))
         if stats.skewness is not None and abs(stats.skewness) >= 2:
-            warnings.append(Warning("high_skew", "low", "Highly skewed measure", f"{name} has skewness {stats.skewness:.2f}.", (Evidence("skewness", "Observed distribution is strongly skewed", {"skewness": stats.skewness}),), "The mean may be sensitive to a small number of large values.", "Consider reporting the median alongside the mean."))
+            tail = "small values" if stats.skewness < 0 else "large values"
+            warnings.append(Warning(
+                "high_skew",
+                "low",
+                "Highly skewed measure",
+                f"{name} has skewness {stats.skewness:.2f}.",
+                (Evidence("skewness", "Observed distribution is strongly skewed", {"skewness": stats.skewness}),),
+                f"The mean may be sensitive to a small number of {tail}.",
+                "Consider reporting the median alongside the mean.",
+            ))
         if stats.negative_count:
             warnings.append(Warning("negative_measure_values", "low", f"Negative values in {name}", f"{stats.negative_count} negative values were observed in likely measure {name}.", (Evidence("negative_count", f"{stats.negative_count} values are below zero", {"negative_count": stats.negative_count}),), "Negative values may represent refunds, reversals, or data issues.", "Check domain meaning before filtering negative values."))
     elif semantic.role == "dimension" and not high_cardinality_text:

@@ -1,9 +1,9 @@
 """Evidence-bearing inferences and recommendations."""
 
-from dataclasses import dataclass, field
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 
 def _freeze(value: Any) -> Any:
@@ -75,6 +75,8 @@ class GrainContext:
 
 @dataclass(frozen=True)
 class RelationshipContext:
+    """A directional value mapping, with coverage measured over determinants."""
+
     source_column: str
     target_column: str
     kind: str
@@ -87,6 +89,7 @@ class RelationshipContext:
     affected_groups: int = 0
     paired_row_count: int = 0
     missing_pair_count: int = 0
+    mapping_cardinality: Literal["one_to_one", "one_to_many", "many_to_one"] | None = None
 
     def __post_init__(self) -> None:
         if self.semantic_confidence is None:
@@ -107,6 +110,7 @@ class CardinalityContext:
     maximum_records_per_value: int | None
     missing_count: int = 0
     missing_rate: float = 0.0
+    constancy: Evidence | None = None
 
 
 @dataclass(frozen=True)

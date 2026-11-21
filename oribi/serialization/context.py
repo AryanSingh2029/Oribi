@@ -1,10 +1,11 @@
 """Compact AI-oriented rendering of an existing context snapshot."""
 
-from collections.abc import Sequence
-from datetime import date, datetime
-from numbers import Number
-from typing import Any, NamedTuple
+from collections.abc import Iterable, Sequence
+from datetime import date, datetime, time
+from numbers import Integral, Number
+from typing import Any, NamedTuple, SupportsInt
 
+from ..models.evidence import Warning
 from .aggregations import aggregation_conditions
 from .categories import format_categories
 
@@ -12,14 +13,24 @@ from .categories import format_categories
 class _OptionalText(NamedTuple):
     text: str
     evidence: str = ""
-    categories: str = ""
+    values: str = ""
 
 
 _ContextLine = str | _OptionalText
 
 
+def prioritize_warnings(warnings: Iterable[Warning]) -> list[Warning]:
+    """Return distinct warning messages in severity order."""
+    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    distinct = {(warning.code, warning.message): warning for warning in warnings}
+    return sorted(
+        distinct.values(),
+        key=lambda warning: (severity_rank.get(warning.severity, 4), warning.code, warning.message),
+    )
+
+
 def _render_with_evidence(sections: Sequence[Sequence[_ContextLine]], max_chars: int) -> str | None:
-    """Allocate space to required text, evidence, then optional category values."""
+    """Allocate space to required text, evidence, then optional value details."""
     lines: list[_ContextLine] = []
     for section in sections:
         if lines:
@@ -31,7 +42,7 @@ def _render_with_evidence(sections: Sequence[Sequence[_ContextLine]], max_chars:
         return None
 
     rendered: list[str] = []
-    category_lines: list[tuple[int, str]] = []
+    value_lines: list[tuple[int, str]] = []
     for line in lines:
         if isinstance(line, str):
             rendered.append(line)
@@ -40,13 +51,13 @@ def _render_with_evidence(sections: Sequence[Sequence[_ContextLine]], max_chars:
             if len(line.evidence) <= available:
                 text += line.evidence
                 available -= len(line.evidence)
-            if line.categories:
-                category_lines.append((len(rendered), line.categories))
+            if line.values:
+                value_lines.append((len(rendered), line.values))
             rendered.append(text)
-    for index, categories in category_lines:
-        if len(categories) <= available:
-            rendered[index] += categories
-            available -= len(categories)
+    for index, values in value_lines:
+        if len(values) <= available:
+            rendered[index] += values
+            available -= len(values)
     return "\n".join(rendered)
 
 
@@ -99,7 +110,7 @@ def _relationship_lines(context: Any) -> list[str]:
                 evidence_details = relation.evidence[0].details if relation.evidence else {}
                 average_entities = evidence_details.get("average_entities_per_group")
                 if relation.related_columns and average_entities is not None:
-                    detail = f"about {average_entities:.1f} related observations per group"
+                    detail = f"one-to-many; about {average_entities:.1f} related observations per group"
                 elif card and card.average_records_per_value is not None:
                     detail = (
                         f"{card.unique_count:,} unique values across {card.observed_count:,} "
@@ -153,6 +164,8 @@ def _relationship_lines(context: Any) -> list[str]:
                     f"{relation.missing_pair_count} incomplete rows; {relation.coverage:.0%} group coverage)"
                 )
                 continue
+            if relation.mapping_cardinality:
+                evidence = f"{relation.mapping_cardinality.replace('_', '-')}; {evidence}"
             lines.append(
                 f"- {relation.source_column} → {relation.target_column}: observed functional dependency "
                 f"({evidence}; {relation.coverage:.0%} coverage; {relation.confidence:.0%} confidence)"
@@ -160,7 +173,7 @@ def _relationship_lines(context: Any) -> list[str]:
     return lines if len(lines) > 1 else []
 
 
-def _column_role_lines(context: Any) -> list[str]:
+def _column_role_lines(context: Any) -> list[_ContextLine]:
     labels = {
         "identifier": "identifier candidate",
         "dimension": "categorical dimension",
@@ -171,15 +184,20 @@ def _column_role_lines(context: Any) -> list[str]:
         "text": "text",
         "unknown": "unknown",
     }
-    lines = ["COLUMN ROLES"]
+    lines: list[_ContextLine] = ["COLUMN ROLES"]
     for column in sorted(context.columns, key=lambda item: item.name):
         role = labels.get(column.semantic.role, column.semantic.role)
-        lines.append(f"- {column.name}: {role} ({column.semantic.confidence:.0%} confidence)")
+        line = f"- {column.name}: {role} ({column.semantic.confidence:.0%} confidence)"
+        basis = next((
+            evidence.statement for evidence in column.semantic.evidence
+            if evidence.code in {"iso_temporal_values", "temporal_object_values"}
+        ), "")
+        lines.append(_OptionalText(line, evidence=f" · {basis}") if basis else line)
     return lines if len(lines) > 1 else []
 
 
-def _cardinality_lines(context: Any) -> list[str]:
-    lines = ["CARDINALITY"]
+def _cardinality_lines(context: Any) -> list[_ContextLine]:
+    lines: list[_ContextLine] = ["CARDINALITY"]
     for column in sorted(context.columns, key=lambda item: item.name):
         card = column.cardinality
         if card is None:
@@ -193,7 +211,7 @@ def _cardinality_lines(context: Any) -> list[str]:
             line += f"; {card.missing_count:,} missing ({card.missing_rate:.0%})"
             line += f"; average {card.average_records_per_value:.2f} records/value"
             line += f" (min {card.minimum_records_per_value}, max {card.maximum_records_per_value})"
-        lines.append(line)
+        lines.append(_OptionalText(line, evidence=f" · {card.constancy.statement}") if card.constancy else line)
     return lines if len(lines) > 1 else []
 
 
@@ -205,14 +223,13 @@ def _format_range_value(value: Any) -> str:
     the date-only form.
     """
     if isinstance(value, datetime):
-        # Only collapse midnight to date for naive datetimes.
-        # Timezone-aware values must preserve the offset.
-        if value.tzinfo is None and value.time().isoformat() == "00:00:00":
+        # time() drops the sub-microsecond component of pandas timestamps.
+        if value.tzinfo is None and value.time() == time.min and getattr(value, "nanosecond", 0) == 0:
             return value.date().isoformat()
         return str(value)
     if isinstance(value, date):
         return value.isoformat()
-    if isinstance(value, Number) and not isinstance(value, (bool, complex)):
+    if isinstance(value, Number) and isinstance(value, SupportsInt) and not isinstance(value, (bool, complex)):
         try:
             integer = int(value)
             if value == integer:
@@ -223,10 +240,16 @@ def _format_range_value(value: Any) -> str:
 
 
 def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = False) -> str:
+    if isinstance(max_chars, bool) or not isinstance(max_chars, Integral):
+        raise ValueError("max_chars must be an integer")
+    max_chars = int(max_chars)
     if max_chars < 100:
         raise ValueError("max_chars must be at least 100")
     p = context.profile
     header = ["DATASET", f"{p.row_count:,} rows \u00d7 {p.column_count:,} columns"]
+    if p.exact_row_limit_exceeded:
+        header.append("Exact row limit exceeded.")
+    essential_header = len(header)
     if p.duplicate_row_count:
         header.append(f"Duplicate rows: {p.duplicate_row_count:,}")
     header.append("Confidence percentages are heuristic scores, not probabilities.")
@@ -293,12 +316,12 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
         operations = _format_aggregations(rec.operation for rec in aggregations)
         conditions = aggregation_conditions(aggregations, col.semantic.role)
         aggregation_line = f"Aggregations: {operations}{conditions}"
-        basis = list(dict.fromkeys(
+        agg_basis = list(dict.fromkeys(
             " ".join(evidence.statement.split())
             for rec in aggregations for evidence in rec.evidence
         ))
-        if basis:
-            fields.append(_OptionalText(aggregation_line, evidence=f"\nAggregation basis: {' · '.join(basis[:2])}"))
+        if agg_basis:
+            fields.append(_OptionalText(aggregation_line, evidence=f"\nAggregation basis: {' · '.join(agg_basis[:2])}"))
         else:
             fields.append(aggregation_line)
         useful = [
@@ -321,12 +344,14 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
                 operations_line = f"{operations_line} | {inappropriate_line}" if operations_line else inappropriate_line
             guidance.append((bool(inappropriate) or any(rec.disposition == "caution" for rec in aggregations),
                              f"- {col.name}: {operations_line}"))
+        optional_values = ""
         if include_values and col.categories is not None:
-            last = fields[-1]
-            categories = "\n" + format_categories(col.categories, s.distinct_count)
-            fields[-1] = _OptionalText(last, categories=categories) if isinstance(last, str) else last._replace(categories=categories)
+            optional_values = "\n" + format_categories(col.categories, s.distinct_count)
         elif include_values and s.top_values:
-            fields.append("Local value samples: " + ", ".join(f"{v} ({n})" for v, n in s.top_values))
+            optional_values = "\nLocal value samples: " + ", ".join(f"{v} ({n})" for v, n in s.top_values)
+        if optional_values:
+            last = fields[-1]
+            fields[-1] = _OptionalText(last, values=optional_values) if isinstance(last, str) else last._replace(values=optional_values)
         column_lines.extend(fields)
 
     sections: list[Sequence[_ContextLine]] = [header, grain_lines]
@@ -348,7 +373,7 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
     # Keep the schema, warnings and actionable operations ahead of evidence,
     # detailed cardinality and relationship prose. Retain complete lines only.
     marker = "[Context truncated.]"
-    kept = header[:2]
+    kept = header[:essential_header]
     available = max_chars - len("\n".join((*kept, marker)))
 
     def add_section(title: str, lines: Sequence[str]) -> None:
@@ -371,22 +396,19 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
         for col in ranked
     ])
     if warning_lines:
-        severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-        distinct_warnings = {(warning.code, warning.message): warning for warning in all_warnings}
-        prioritized = sorted(
-            distinct_warnings.values(),
-            key=lambda warning: (severity_rank.get(warning.severity, 4), warning.code, warning.message),
-        )
+        prioritized = prioritize_warnings(all_warnings)
         selected_warnings = prioritized[:10]
         messages = [f"⚠ {warning.message}" for warning in selected_warnings]
         if len(prioritized) > len(selected_warnings):
             messages.append(f"{len(prioritized) - len(selected_warnings)} additional warnings omitted.")
         add_section("WARNINGS", messages)
     add_section("AGGREGATION GUIDANCE", [line for _, line in sorted(guidance, key=lambda item: not item[0])])
-    if header[2:]:
-        add_section("DATASET DETAILS", header[2:])
+    if header[essential_header:]:
+        add_section("DATASET DETAILS", header[essential_header:])
     if relationship_lines:
         add_section(relationship_lines[0], relationship_lines[1:10])
     if cardinality_lines:
-        add_section(cardinality_lines[0], cardinality_lines[1:10])
+        add_section("CARDINALITY", [
+            line if isinstance(line, str) else line.text for line in cardinality_lines[1:10]
+        ])
     return "\n".join((*kept, marker))

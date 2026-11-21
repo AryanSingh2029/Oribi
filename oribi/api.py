@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from numbers import Integral
+from typing import cast
 
 import pandas as pd
 
@@ -9,8 +10,8 @@ from .exceptions import InvalidInputError
 from .models.context import ColumnContext, DatasetContext
 from .models.evidence import CategoricalContext, Warning
 from .models.profile import DatasetProfile, IndexContext
-from .profiling.columns import profile_column
 from .profiling.cardinality import profile_cardinality
+from .profiling.columns import profile_column
 from .profiling.observations import AnalysisSession
 from .profiling.relationships import detect_relationships, infer_column_relationships
 from .profiling.temporal import temporal_gap_warnings
@@ -46,7 +47,7 @@ class ProfileOptions:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, Integral):
                 raise ValueError(f"{name} must be an integer")
-        for name, minimum in (("top_k", 1), ("max_exact_rows", 1), ("max_key_columns", 2),
+        for name, minimum in (("top_k", 0), ("max_exact_rows", 1), ("max_key_columns", 2),
                               ("max_relationships", 0), ("max_relationship_columns", 0),
                               ("max_gap_examples", 0), ("max_gap_warnings", 1)):
             if getattr(self, name) < minimum:
@@ -85,8 +86,8 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
     """Profile a pandas DataFrame and return its analytical context snapshot.
 
     The returned context contains no reference to ``df``. Sampled built-in lists
-    and dictionaries are copied, including those nested within them. Object
-    columns that appear datetime-like are not parsed automatically.
+    and dictionaries are copied, including those nested within them. Temporal
+    role inference for string or object columns preserves their stored values.
     """
     if options is None:
         options = ProfileOptions()
@@ -94,14 +95,22 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
         raise InvalidInputError("options must be a ProfileOptions instance")
     session = AnalysisSession(df, options)
     nrows, ncols = df.shape
+    exact_row_limit_exceeded = nrows > options.max_exact_rows
     try:
-        duplicates = int(df.duplicated().sum())
+        try:
+            duplicates = int(df.duplicated().sum())
+        except AttributeError:
+            if ncols != 1 or not isinstance(df.dtypes.iloc[0], pd.SparseDtype):
+                raise
+            # Older pandas uses a Series fast path that cannot compare sparse floats.
+            sparse = cast(pd.arrays.SparseArray, df.iloc[:, 0].array)
+            duplicates = int(pd.Series(sparse.to_dense()).duplicated().sum())
     except (TypeError, ValueError):
         duplicates = None
     duplicate_rate = (duplicates / nrows) if duplicates is not None and nrows else (0.0 if duplicates == 0 else None)
     names = list(df.columns)
     observations = {name: session.observe(name) for name in names}
-    stats = {name: profile_column(obs, nrows, options.top_k, options.include_quantiles and nrows <= options.max_exact_rows) for name, obs in observations.items()}
+    stats = {name: profile_column(obs, nrows, options.top_k, options.include_quantiles and not exact_row_limit_exceeded) for name, obs in observations.items()}
     semantics = {
         name: infer_semantic(
             name,
@@ -109,21 +118,27 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
             stats[name],
             nrows,
             is_float=pd.api.types.is_float_dtype(observations[name].series.dtype),
+            date_evidence=observations[name].date_evidence,
         )
         for name in names
     }
+    # Unparsed dates can represent the same instant in different forms, and
+    # native Period columns represent calendar intervals rather than entity keys.
+    structural_roles = {
+        name: semantics[name].role for name in names
+        if observations[name].date_evidence is None
+    }
     key_candidates, grain = detect_keys(
-        df, names, stats, {name: semantics[name].role for name in names},
+        df, names, stats, structural_roles,
         max_columns=options.max_key_columns, max_exact_rows=options.max_exact_rows,
     )
     cardinalities = {
         name: profile_cardinality(observations[name].series, nrows)
         for name in names
     }
-    role_map = {name: semantics[name].role for name in names}
     relationships = detect_relationships(
         df,
-        role_map,
+        structural_roles,
         max_rows=options.max_exact_rows,
         candidate_keys=key_candidates,
         grain=grain,
@@ -176,7 +191,10 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
             "Pandas could not compare rows with the available cell values.",
         ))
     return DatasetContext(
-        profile=DatasetProfile(nrows, ncols, duplicates, duplicate_rate, _profile_index(df)),
+        profile=DatasetProfile(
+            nrows, ncols, duplicates, duplicate_rate, _profile_index(df),
+            exact_row_limit_exceeded=exact_row_limit_exceeded,
+        ),
         columns=tuple(columns),
         candidate_keys=key_candidates,
         grain=grain,

@@ -18,7 +18,7 @@ Small fixes, focused tests, and documentation improvements can generally go stra
 
 ## Development setup
 
-Oribi supports Python 3.10 through 3.14 and pandas 1.5.3 through the latest pandas 3.x release. The `dev` extra installs pytest and the build frontend.
+Oribi supports Python 3.10 through 3.14 and pandas 1.5.3 through the latest pandas 3.x release. The `dev` extra installs pytest, build, ruff, and mypy.
 
 From a clone of the repository, create and activate a virtual environment, then install the development dependencies:
 
@@ -40,13 +40,15 @@ source .venv/bin/activate
 python -m pip install -e ".[dev]"
 ```
 
-Run the test suite from the repository root:
+Run the test suite, linter, and type checker from the repository root:
 
 ```bash
 pytest
+ruff check .
+mypy oribi
 ```
 
-GitHub Actions runs the test suite on representative supported Python/pandas combinations and builds wheel and source distributions. The repository does not require a separate linting, formatting, or type-checking tool.
+GitHub Actions runs the test suite on representative supported Python/pandas combinations, runs `ruff` and `mypy`, and builds wheel and source distributions.
 
 To run the installed package tests locally, build a wheel and install it in a clean virtual environment, then run pytest from outside the checkout. For the release validation used in CI, run:
 
@@ -56,6 +58,32 @@ python -m build
 python -m twine check dist/*
 python scripts/validate_package.py
 ```
+
+### Running the quickstart with a legacy Windows stdout encoding
+
+The end-to-end example prints Unicode symbols, including the `⚠` warning marker in compact output:
+
+```bash
+python -m examples.quickstart
+```
+
+On Windows, when stdout uses a legacy encoding such as `cp1252` and the output is redirected or captured (for example, piped through PowerShell), Python can raise `UnicodeEncodeError` before the summary and compact report finish printing. This is an output-encoding issue, not a problem with the example itself, and no global Windows setting needs to change.
+
+To reproduce the failure in PowerShell, temporarily override the stdout encoding, run the default command with its output captured, and then clear the override:
+
+```powershell
+$env:PYTHONIOENCODING = 'cp1252'
+python -m examples.quickstart | Out-String
+Remove-Item Env:PYTHONIOENCODING
+```
+
+`PYTHONIOENCODING` takes precedence over the interpreter's UTF-8 mode, so clear that override before running the UTF-8 command. With the override removed, enable UTF-8 for this invocation only:
+
+```powershell
+python -X utf8 -m examples.quickstart
+```
+
+The command completes with the full summary and compact report, and it leaves the system-wide Windows encoding unchanged.
 
 ## Releasing
 
@@ -94,7 +122,7 @@ Detection records what the frame contains. Reasoning interprets those observatio
 1. Open an issue first for substantial analytical, API, dependency, or architecture changes.
 2. Fork the repository and create a branch for your change.
 3. Implement the change and add or update behavior-focused tests when appropriate.
-4. Run `pytest` from the repository root.
+4. Run `pytest`, `ruff check .`, and `mypy oribi` from the repository root.
 5. Commit your changes and open a pull request describing the change and its effect on analytical behavior.
 6. Respond to review feedback and update the pull request as needed.
 

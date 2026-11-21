@@ -1,13 +1,15 @@
 import json
 from dataclasses import replace
+from numbers import Real
 
+import numpy as np
 import pandas as pd
-
 import pytest
 
-from oribi import inspect, ProfileOptions
+from oribi import ProfileOptions, inspect
 from oribi.models.evidence import CategoricalContext
 from oribi.serialization.context import _format_aggregations, _format_range_value
+from oribi.serialization.dict import _normalize
 
 
 def test_serialization_outputs(sales_frame):
@@ -213,6 +215,60 @@ def test_inspect_preserves_cycles_and_shared_items_in_a_snapshot():
     assert snapshot["first"] is not shared
 
 
+def test_opt_in_exports_raise_clear_error_for_circular_list_sample():
+    import pandas as pd
+
+    sample = []
+    sample.append(sample)
+    context = inspect(pd.DataFrame({"items": [sample]}))
+
+    with pytest.raises(ValueError, match="circular reference") as dict_error:
+        context.to_dict(include_values=True)
+    assert "top_values" in str(dict_error.value)
+    assert "include_values" in str(dict_error.value)
+    with pytest.raises(ValueError, match="circular reference"):
+        context.to_json(include_values=True)
+
+
+def test_opt_in_exports_raise_clear_error_for_circular_dict_sample():
+    import pandas as pd
+
+    sample = {"label": "x"}
+    sample["self"] = sample
+    context = inspect(pd.DataFrame({"value": [sample]}))
+
+    with pytest.raises(ValueError, match="circular reference"):
+        context.to_dict(include_values=True)
+    with pytest.raises(ValueError, match="circular reference"):
+        context.to_json(include_values=True)
+
+
+def test_opt_in_export_serializes_sample_reusing_the_same_child_twice():
+    import pandas as pd
+
+    shared = ["a"]
+    sample = {"first": shared, "second": shared}
+    context = inspect(pd.DataFrame({"value": [sample]}))
+
+    exported = context.to_dict(include_values=True)
+    assert exported["columns"][0]["statistics"]["top_values"] == [
+        [{"first": ["a"], "second": ["a"]}, 1]
+    ]
+    assert json.loads(context.to_json(include_values=True)) == exported
+
+
+def test_default_exports_succeed_for_circular_samples_and_omit_values():
+    import pandas as pd
+
+    sample = []
+    sample.append(sample)
+    context = inspect(pd.DataFrame({"items": [sample]}))
+
+    exported = context.to_dict()
+    assert exported["columns"][0]["statistics"]["top_values"] == []
+    assert json.loads(context.to_json()) == exported
+
+
 def test_context_limit_keeps_an_explicit_marker_for_long_labels():
     import pandas as pd
 
@@ -281,10 +337,25 @@ def test_markdown_renders_column_names_as_literal_text():
     assert "### order_id" in markdown
     assert r"order\_id" not in markdown
 
+@pytest.mark.parametrize("tz", [None, "UTC"])
+def test_compact_context_preserves_nanosecond_ranges_near_midnight(tz):
+    stamps = pd.date_range("2026-01-01 00:00:00.000000001", periods=2, freq="ns", tz=tz)
+    context = inspect(pd.DataFrame({"stamp": stamps}))
+    offset = "+00:00" if tz else ""
+    bounds = (
+        f"Range 2026-01-01 00:00:00.000000001{offset} → "
+        f"2026-01-01 00:00:00.000000002{offset}"
+    )
+
+    assert bounds in context.to_context(include_values=True)
+    assert "Range " not in context.to_context()
+
+
 def test_compact_context_preserves_timezone_offset_on_midnight_ranges():
     """Timezone-aware midnight bounds keep time and offset; naive still date-only."""
+    from datetime import datetime, timedelta, timezone
+
     import pandas as pd
-    from datetime import datetime, timezone, timedelta
 
     offset = timezone(timedelta(hours=5, minutes=30))  # +05:30
     aware = [
@@ -373,3 +444,201 @@ def test_text_category_values_distinguish_types_and_render_once():
         assert ': 1 (2), " a, b " (2), "1" (2)' in categories
         assert "north" in categories and "west" in categories
         assert "Local value samples:" not in rendered
+
+
+def test_compact_context_omits_oversized_local_samples_before_truncating():
+    ids = [f"id-{i}-" + "x" * 3000 for i in range(10)]
+    context = inspect(pd.DataFrame({"customer_id": ids}))
+
+    default_ctx = context.to_context(max_chars=1600)
+    opt_in_ctx = context.to_context(max_chars=1600, include_values=True)
+
+    assert len(default_ctx) <= 1600
+    assert len(opt_in_ctx) <= 1600
+    assert "[Context truncated.]" not in default_ctx
+    assert "[Context truncated.]" not in opt_in_ctx
+    assert "Local value samples:" not in default_ctx
+    assert "Local value samples:" not in opt_in_ctx
+    assert opt_in_ctx == default_ctx
+    assert "RELATIONSHIPS" in opt_in_ctx
+    assert "CARDINALITY" in opt_in_ctx
+
+    over_budget = context.to_context(max_chars=250, include_values=True)
+    assert len(over_budget) <= 250
+    assert over_budget.endswith("[Context truncated.]")
+
+
+def test_compact_context_includes_short_local_samples_when_budget_allows():
+    ids = [f"id-{i}" for i in range(5)]
+    context = inspect(pd.DataFrame({"customer_id": ids}))
+
+    default_ctx = context.to_context(max_chars=1600)
+    assert "Local value samples:" not in default_ctx
+
+    with_samples = context.to_context(max_chars=1600, include_values=True)
+    assert "[Context truncated.]" not in with_samples
+    assert "Local value samples: " in with_samples
+    assert "id-0 (1)" in with_samples
+
+    exact_fit = context.to_context(max_chars=len(with_samples), include_values=True)
+    assert exact_fit == with_samples
+    assert len(exact_fit) <= len(with_samples)
+
+    one_char_short = context.to_context(max_chars=len(with_samples) - 1, include_values=True)
+    assert len(one_char_short) <= len(with_samples) - 1
+    assert "[Context truncated.]" not in one_char_short
+    assert "Local value samples:" not in one_char_short
+    assert one_char_short == default_ctx
+
+
+def test_compact_context_omits_oversized_sample_while_keeping_short_sample():
+    context = inspect(
+        pd.DataFrame(
+            {
+                "long_id": [f"long-{i}-" + "x" * 2000 for i in range(5)],
+                "short_id": [f"s-{i}" for i in range(5)],
+            }
+        )
+    )
+
+    rendered = context.to_context(max_chars=2400, include_values=True)
+    assert len(rendered) <= 2400
+    assert "[Context truncated.]" not in rendered
+    assert "long-0-" not in rendered
+    assert "Local value samples: s-0 (1)" in rendered
+
+
+@pytest.mark.parametrize(
+    "invalid_max_chars",
+    [
+        "100",
+        "200",
+        True,
+        False,
+        np.bool_(True),
+        100.5,
+        100.0,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        None,
+    ],
+)
+def test_to_context_rejects_non_integer_max_chars(invalid_max_chars):
+    context = inspect(pd.DataFrame({"region": ["east", "west", "east"]}))
+    with pytest.raises(ValueError, match="max_chars must be an integer"):
+        context.to_context(max_chars=invalid_max_chars)
+
+
+@pytest.mark.parametrize("too_small", [99, 0, -1, np.int64(99)])
+def test_to_context_rejects_max_chars_below_minimum(too_small):
+    context = inspect(pd.DataFrame({"region": ["east", "west", "east"]}))
+    with pytest.raises(ValueError, match="max_chars must be at least 100"):
+        context.to_context(max_chars=too_small)
+
+
+def test_to_context_accepts_minimum_and_numpy_integer_budgets():
+    context = inspect(pd.DataFrame({"region": ["east", "west", "east"]}))
+
+    at_minimum = context.to_context(max_chars=100)
+    assert len(at_minimum) <= 100
+    assert "DATASET" in at_minimum
+
+    for numpy_budget, python_budget in (
+        (np.int64(100), 100),
+        (np.uint8(100), 100),
+        (np.int32(500), 500),
+        (np.int64(8000), 8000),
+    ):
+        assert context.to_context(max_chars=numpy_budget) == context.to_context(max_chars=python_budget)
+
+
+def _strict_json_loads(payload: str):
+    def reject_constant(constant: str):
+        raise AssertionError(f"Nonstandard JSON constant emitted: {constant}")
+
+    return json.loads(payload, parse_constant=reject_constant)
+
+
+def test_structured_exports_handle_numpy_longdouble_index_name():
+    index = pd.Index(["a", "b", "c"], name=np.longdouble("1.25"))
+    context = inspect(pd.DataFrame({"amount": [1, 2, 3]}, index=index))
+
+    exported = context.to_dict()
+    encoded = context.to_json()
+
+    assert exported["profile"]["index"]["names"] == [1.25]
+    assert type(exported["profile"]["index"]["names"][0]) is float
+    assert _strict_json_loads(encoded) == exported
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    [
+        np.longdouble("nan"),
+        np.longdouble("inf"),
+        np.longdouble("-inf"),
+    ],
+)
+def test_structured_exports_normalize_non_finite_longdouble_to_none(raw_value):
+    index = pd.Index(["a", "b", "c"], name=raw_value)
+    context = inspect(pd.DataFrame({"amount": [1, 2, 3]}, index=index))
+
+    exported = context.to_dict()
+    encoded = context.to_json()
+
+    assert exported["profile"]["index"]["names"] == [None]
+    assert _strict_json_loads(encoded) == exported
+
+
+def test_normalize_maps_out_of_range_extended_floats_to_none():
+    class OverflowingExtendedFloat(Real):
+        def item(self):
+            return self
+
+        def __float__(self):
+            raise OverflowError("extended float outside float64 range")
+
+        def __abs__(self): return self
+        def __add__(self, other): return NotImplemented
+        def __ceil__(self): return 0
+        def __eq__(self, other): return self is other
+        def __floor__(self): return 0
+        def __floordiv__(self, other): return NotImplemented
+        def __le__(self, other): return NotImplemented
+        def __lt__(self, other): return NotImplemented
+        def __mod__(self, other): return NotImplemented
+        def __mul__(self, other): return NotImplemented
+        def __neg__(self): return self
+        def __pos__(self): return self
+        def __pow__(self, other): return NotImplemented
+        def __radd__(self, other): return NotImplemented
+        def __rfloordiv__(self, other): return NotImplemented
+        def __rmod__(self, other): return NotImplemented
+        def __rmul__(self, other): return NotImplemented
+        def __round__(self, ndigits=None): return 0
+        def __rpow__(self, other): return NotImplemented
+        def __rtruediv__(self, other): return NotImplemented
+        def __truediv__(self, other): return NotImplemented
+        def __trunc__(self): return 0
+
+    assert _normalize(OverflowingExtendedFloat()) is None
+    if np.finfo(np.longdouble).maxexp > 1024:
+        assert _normalize(np.longdouble("1e400")) is None
+        assert _normalize(np.longdouble("-1e400")) is None
+
+
+def test_normalize_preserves_standard_numpy_scalars_and_handles_clongdouble():
+    assert _normalize(np.int64(7)) == 7
+    assert type(_normalize(np.int64(7))) is int
+    assert _normalize(np.uint8(3)) == 3
+    assert type(_normalize(np.uint8(3))) is int
+    assert _normalize(np.float32(1.5)) == 1.5
+    assert type(_normalize(np.float32(1.5))) is float
+    assert _normalize(np.float64(2.5)) == 2.5
+    assert type(_normalize(np.float64(2.5))) is float
+    assert _normalize(np.float64("nan")) is None
+    assert _normalize(np.float64("inf")) is None
+    assert _normalize(np.bool_(True)) is True
+    assert type(_normalize(np.bool_(True))) is bool
+    assert _normalize(np.clongdouble(1 + 2j)) == str(np.clongdouble(1 + 2j))
