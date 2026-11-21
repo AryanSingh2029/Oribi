@@ -35,6 +35,8 @@ def to_markdown(context: Any, *, include_values: bool = False) -> str:
     ]
     if profile.duplicate_row_count is not None:
         lines.append(f"- Duplicate rows: {profile.duplicate_row_count:,}")
+    if profile.exact_row_limit_exceeded:
+        lines.append("- Exact row limit exceeded.")
     if profile.index is not None:
         index = profile.index
         names = ", ".join(_md(name) if name is not None else f"level {i}" for i, name in enumerate(index.names))
@@ -105,6 +107,8 @@ def to_markdown(context: Any, *, include_values: bool = False) -> str:
                 continue
             statement = _md(relation.evidence[0].statement) if relation.evidence else "observed value mapping"
             detail = f"{statement} · {relation.coverage:.1%} coverage · {relation.confidence:.0%} confidence"
+            if relation.kind == "functional_dependency" and relation.mapping_cardinality:
+                detail = f"{relation.mapping_cardinality.replace('_', '-')} · {detail}"
             if relation.kind == "approximate_mapping":
                 detail += f" · {relation.affected_groups} conflicting groups · {relation.violation_count} violations · {relation.missing_pair_count} incomplete rows"
             if relation.kind == "one_to_many" and relation.evidence:
@@ -135,6 +139,8 @@ def to_markdown(context: Any, *, include_values: bool = False) -> str:
                     f"(min {card.minimum_records_per_value}, max {card.maximum_records_per_value}); "
                     f"{card.missing_count:,} missing ({card.missing_rate:.1%})"
                 )
+            if card.constancy is not None:
+                lines.append(f"- {_md(card.constancy.statement)}")
         if include_values and (s.minimum is not None or s.maximum is not None):
             lines.append(f"- Range: {_md(s.minimum)} to {_md(s.maximum)}")
         if include_values and col.categories is not None:

@@ -308,7 +308,7 @@ def detect_relationships(
             if source_values >= source_observed:
                 # A unique determinant maps trivially to every row-level value.
                 continue
-            mapping_counts = pairs.groupby(source, dropna=True)[target].nunique()
+            mapping_counts = pairs.groupby(source, dropna=True, observed=True, sort=False)[target].nunique()
             unique_mapping = int(mapping_counts.eq(1).sum())
             coverage = unique_mapping / source_values
             affected_groups = int(mapping_counts.gt(1).sum())
@@ -317,6 +317,7 @@ def detect_relationships(
             missing_pairs = len(frame) - paired_rows
             target_values = _nunique(frame[target])
             if coverage >= .98 and target_values > 1:
+                exact_mapping = unique_mapping == source_values and not violations and not missing_pairs
                 repeated_fraction = max(0.0, (source_observed - source_values) / source_observed)
                 confidence, components = _score(
                     {"mapping_coverage": coverage, "repeated_determinant_support": repeated_fraction,
@@ -326,7 +327,7 @@ def detect_relationships(
                 )
                 results.append(RelationshipContext(
                     source, target,
-                    "functional_dependency" if not violations and not missing_pairs else "approximate_mapping",
+                    "functional_dependency" if exact_mapping else "approximate_mapping",
                     coverage,
                     confidence,
                     (Evidence("value_mapping", f"{coverage:.1%} of observed {source} values map to one {target} value", {"source_distinct": int(source_values), "target_distinct": int(target_values), "coverage": coverage, "violation_count": violations, "affected_groups": affected_groups, "paired_row_count": paired_rows, "missing_pair_count": missing_pairs}),),
@@ -335,6 +336,9 @@ def detect_relationships(
                     affected_groups=affected_groups,
                     paired_row_count=paired_rows,
                     missing_pair_count=missing_pairs,
+                    mapping_cardinality=(
+                        "one_to_one" if source_values == target_values else "many_to_one"
+                    ) if exact_mapping else None,
                 ))
     dependency_edges = {
         (relation.source_column, relation.target_column): relation
@@ -381,6 +385,8 @@ def detect_relationships(
                 {"distinct_values": distinct, "coverage": coverage},
             ),),
             confidence_components=components,
+            paired_row_count=forward.paired_row_count,
+            mapping_cardinality="one_to_one",
         ))
         known_one_to_one.add(pair)
     # Repeated group values mapping uniquely to observed entity keys support
@@ -414,11 +420,11 @@ def detect_relationships(
                 continue
             if pairs.empty:
                 continue
-            entity_group_counts = pairs.groupby(entity, dropna=True)[group].nunique()
+            entity_group_counts = pairs.groupby(entity, dropna=True, observed=True, sort=False)[group].nunique()
             coverage = float(entity_group_counts.eq(1).sum() / entity_count)
             if coverage < 1.0:
                 continue
-            per_group = pairs.groupby(group, dropna=True)[entity].nunique()
+            per_group = pairs.groupby(group, dropna=True, observed=True, sort=False)[entity].nunique()
             if per_group.empty or int(per_group.max()) <= 1:
                 continue
             group_reuse = max(0.0, (entity_count - group_count) / entity_count)
@@ -454,6 +460,7 @@ def detect_relationships(
                 confidence_components=components,
                 paired_row_count=paired_rows,
                 missing_pair_count=missing_pairs,
+                mapping_cardinality="one_to_many",
             ))
 
     # Keep a deterministic orientation for two-way functional dependencies.
