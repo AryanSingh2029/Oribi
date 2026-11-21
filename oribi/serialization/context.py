@@ -20,11 +20,14 @@ _ContextLine = str | _OptionalText
 
 
 def prioritize_warnings(warnings: Iterable[Warning]) -> list[Warning]:
-    """Return distinct warning messages in severity order."""
+    """Return distinct warnings in severity order."""
     severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    distinct = {(warning.code, warning.message): warning for warning in warnings}
+    distinct: list[Warning] = []
+    for warning in warnings:
+        if warning not in distinct:
+            distinct.append(warning)
     return sorted(
-        distinct.values(),
+        distinct,
         key=lambda warning: (severity_rank.get(warning.severity, 4), warning.code, warning.message),
     )
 
@@ -279,8 +282,10 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
     for col in context.columns:
         all_warnings.extend(col.warnings)
     warning_lines: list[_ContextLine] = ["WARNINGS"] if all_warnings else []
-    seen_warnings: set[tuple[str, str]] = set()
+    printed_warnings: list[Any] = []
     for warning in all_warnings:
+        if warning in printed_warnings:
+            continue
         if warning.code == "high_missingness":
             column = next((c for c in context.columns if warning in c.warnings), None)
             if column is None:
@@ -288,14 +293,12 @@ def to_context(context: Any, *, max_chars: int = 8000, include_values: bool = Fa
             message = f"\u26a0 {column.name} \u00b7 {column.statistics.missing_rate:.0%} missing"
         else:
             message = f"\u26a0 {warning.message}"
-        key = (warning.code, message)
-        if key not in seen_warnings:
-            if warning.evidence:
-                basis = " ".join(warning.evidence[0].statement.split())
-                warning_lines.append(_OptionalText(message, evidence=f" · {basis}"))
-            else:
-                warning_lines.append(message)
-            seen_warnings.add(key)
+        if warning.evidence:
+            basis = " ".join(warning.evidence[0].statement.split())
+            warning_lines.append(_OptionalText(message, evidence=f" · {basis}"))
+        else:
+            warning_lines.append(message)
+        printed_warnings.append(warning)
     column_lines: list[_ContextLine] = ["COLUMNS"]
     guidance: list[tuple[bool, str]] = []
     ranked = sorted(context.columns, key=lambda c: c.name)
