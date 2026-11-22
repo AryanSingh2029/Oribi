@@ -13,9 +13,14 @@ from .models.profile import DatasetProfile, IndexContext
 from .profiling.cardinality import profile_cardinality
 from .profiling.columns import profile_column
 from .profiling.observations import AnalysisSession
-from .profiling.relationships import detect_relationships, infer_column_relationships
+from .profiling.relationships import (
+    detect_metric_grain_facts,
+    detect_relationships,
+    infer_column_relationships,
+)
 from .profiling.temporal import temporal_gap_warnings
 from .reasoning.keys import detect_keys
+from .reasoning.metrics import infer_metrics
 from .reasoning.rules import dataset_warnings, reason_column
 from .reasoning.semantic import infer_semantic
 
@@ -196,6 +201,23 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
             "duplicate_check_unavailable", "low", "Duplicate-row check unavailable",
             "Pandas could not compare rows with the available cell values.",
         ))
+    entity_constant_measures, entity_determinants, multi_parent_pairs = detect_metric_grain_facts(
+        df,
+        columns,
+        relationships,
+        max_rows=options.max_exact_rows,
+        max_columns=options.max_relationship_columns,
+    )
+    metrics = infer_metrics(
+        columns,
+        grain=grain,
+        relationships=relationships,
+        row_count=nrows,
+        has_duplicate_rows=bool(duplicates),
+        entity_constant_measures=entity_constant_measures,
+        entity_determinants=entity_determinants,
+        multi_parent_pairs=multi_parent_pairs,
+    )
     return DatasetContext(
         profile=DatasetProfile(
             nrows, ncols, duplicates, duplicate_rate, _profile_index(df),
@@ -206,4 +228,5 @@ def inspect(df: pd.DataFrame, *, options: ProfileOptions | None = None) -> Datas
         grain=grain,
         relationships=relationships,
         warnings=tuple(global_warnings),
+        metrics=metrics,
     )
