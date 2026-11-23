@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 from oribi import CardinalityContext, ProfileOptions, inspect
 from oribi.profiling import relationships
@@ -146,11 +147,81 @@ def test_complete_entity_key_establishes_exact_one_to_many():
         "customer_id": [f"c{i // 4}" for i in range(100)],
         "order_id": [f"o{i}" for i in range(100)],
     })
-    context = inspect(frame)
+    context = inspect(frame, options=ProfileOptions(max_relationship_columns=1))
     key = next(key for key in context.candidate_keys if key.columns == ("order_id",))
     assert key.verified_unique
     assert any(rel.kind == "one_to_many" and rel.source_column == "customer_id"
                and rel.target_column == "order_id" for rel in context.relationships)
+
+
+@pytest.mark.parametrize("column_limit", [1, 2])
+@pytest.mark.parametrize("with_constant", [False, True])
+def test_one_to_many_group_budget_skips_constants_and_unique_entity_keys(column_limit, with_constant):
+    frame = pd.DataFrame({"group": ["a", "a", "b", "b"], "item_id": [1, 2, 3, 4]})
+    if with_constant:
+        frame = frame.assign(const_a="x")
+
+    context = inspect(frame, options=ProfileOptions(max_relationship_columns=column_limit))
+    assert [(rel.source_column, rel.target_column, rel.kind) for rel in context.relationships] == [
+        ("group", "item_id", "one_to_many"),
+    ]
+
+
+def test_one_to_many_group_budget_skips_sparse_unique_identifiers():
+    frame = pd.DataFrame({
+        "customer_id": [f"c{i // 3}" for i in range(12)],
+        "order_id": [f"o{i}" for i in range(12)],
+        "sparse_id": ["s1", "s2"] + [None] * 10,
+    })
+    context = inspect(frame, options=ProfileOptions(max_relationship_columns=1))
+
+    assert [(rel.source_column, rel.target_column, rel.kind) for rel in context.relationships] == [
+        ("customer_id", "order_id", "one_to_many"),
+    ]
+
+
+def test_one_to_many_keeps_multiple_verified_entity_keys_within_budget():
+    frame = pd.DataFrame({
+        "region": ["east", "east", "west", "west"],
+        "order_id": [1, 2, 3, 4],
+        "invoice_id": [101, 102, 103, 104],
+    })
+
+    for column_limit, entities in [(1, ["invoice_id"]), (2, ["invoice_id", "order_id"])]:
+        context = inspect(frame, options=ProfileOptions(max_relationship_columns=column_limit))
+        assert {key.columns for key in context.candidate_keys if key.verified_unique} == {
+            ("invoice_id",), ("order_id",),
+        }
+        assert [
+            (rel.source_column, rel.target_column, rel.kind) for rel in context.relationships
+        ] == [("region", entity, "one_to_many") for entity in entities]
+
+
+def test_one_to_many_group_budget_still_prefers_reused_identifiers():
+    frame = pd.DataFrame({
+        "region": ["east", "east", "east", "west", "west", "west"],
+        "customer_id": ["c0", "c0", "c1", "c1", "c2", "c2"],
+        "order_id": [1, 2, 3, 4, 5, 6],
+    })
+    context = inspect(frame, options=ProfileOptions(max_relationship_columns=1))
+
+    assert [(rel.source_column, rel.target_column, rel.kind) for rel in context.relationships] == [
+        ("customer_id", "order_id", "one_to_many"),
+    ]
+
+
+def test_one_to_many_accepts_reused_groups_above_directional_distinct_limit():
+    frame = pd.DataFrame({
+        "customer_id": [f"c{i // 2}" for i in range(1002)],
+        "order_id": [f"o{i}" for i in range(1002)],
+    })
+    context = inspect(frame, options=ProfileOptions(max_relationship_columns=1))
+
+    (relation,) = context.relationships
+    assert (relation.source_column, relation.target_column, relation.kind) == (
+        "customer_id", "order_id", "one_to_many",
+    )
+    assert relation.evidence[0].details["group_distinct"] == 501
 
 
 def test_unique_id_names_do_not_create_foreign_key_claims_without_group_evidence():
@@ -450,6 +521,78 @@ def test_hierarchical_values_produce_only_observed_functional_dependencies():
     context = inspect(frame)
     assert any(rel.source_column == "L1" and rel.target_column == "L2" and rel.kind == "functional_dependency" for rel in context.relationships)
     assert not any(rel.source_column == "L2" and rel.target_column == "L1" and rel.kind == "functional_dependency" for rel in context.relationships)
+
+
+def _product_family_frame():
+    return pd.DataFrame({
+        "product_code": ["p1", "p1", "p2", "p2", "p3", "p3", "p4", "p4"],
+        "family": ["A", "A", "A", "A", "B", "B", "B", "B"],
+    })
+
+
+def test_directional_mapping_survives_constants_under_column_limit():
+    base = _product_family_frame()
+    padded = base.assign(const_a="x", const_b="y")
+    options = ProfileOptions(max_relationship_columns=2)
+
+    for frame in (base, padded, padded.iloc[:, ::-1]):
+        assert [
+            (rel.source_column, rel.target_column, rel.kind, rel.mapping_cardinality)
+            for rel in inspect(frame, options=options).relationships
+        ] == [("product_code", "family", "functional_dependency", "many_to_one")]
+
+
+def test_sparse_unique_source_does_not_consume_mapping_budget():
+    frame = _product_family_frame().assign(
+        sparse_id=["s1", None, "s2", None, None, None, None, None],
+    )
+    context = inspect(frame, options=ProfileOptions(max_relationship_columns=2))
+
+    assert [(rel.source_column, rel.target_column, rel.kind) for rel in context.relationships] == [
+        ("product_code", "family", "functional_dependency"),
+    ]
+
+
+def test_unique_observed_values_can_be_a_directional_mapping_target():
+    frame = pd.DataFrame({
+        "product_code": ["p1", "p1", "p2", "p2"],
+        "item_id": ["i1", None, "i2", None],
+    })
+    context = inspect(frame, options=ProfileOptions(max_relationship_columns=2))
+
+    (relation,) = context.relationships
+    assert (relation.source_column, relation.target_column, relation.kind) == (
+        "product_code", "item_id", "approximate_mapping",
+    )
+    assert relation.coverage == 1.0
+    assert relation.missing_pair_count == 2
+
+
+def test_directional_mapping_respects_column_and_relationship_budgets():
+    frame = pd.DataFrame({"label": ["a", "a", "b", "b"], "code": ["x", "x", "y", "y"]})
+
+    assert inspect(frame, options=ProfileOptions(max_relationship_columns=1)).relationships == ()
+    assert {rel.kind for rel in inspect(frame).relationships} == {
+        "one_to_one", "functional_dependency",
+    }
+    limited = inspect(frame, options=ProfileOptions(max_relationships=1))
+    assert [rel.kind for rel in limited.relationships] == ["one_to_one"]
+    assert inspect(frame, options=ProfileOptions(max_relationships=0)).relationships == ()
+
+
+@pytest.mark.parametrize(("distinct_count", "has_mapping"), [(20, True), (21, False)])
+def test_directional_mapping_respects_distinct_value_limit(distinct_count, has_mapping):
+    codes = [f"p{i}" for i in range(distinct_count)] + ["p0"] * (40 - distinct_count)
+    frame = pd.DataFrame({
+        "product_code": codes,
+        "family": ["A" if code == "p0" else "B" for code in codes],
+    })
+
+    assert any(
+        rel.source_column == "product_code" and rel.target_column == "family"
+        and rel.kind == "functional_dependency"
+        for rel in inspect(frame).relationships
+    ) is has_mapping
 
 
 def test_repeated_and_mostly_unique_columns_have_distinct_relationships():
