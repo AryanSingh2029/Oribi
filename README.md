@@ -2,8 +2,6 @@
   <img alt="Oribi logo" src="./branding/oribi-logo-readme.svg" width="352">
 </p>
 
-# Oribi
-
 **Give AI a useful picture of your data before it starts analyzing it.**
 
 Oribi is an open source Python library that profiles a pandas DataFrame and turns what it finds into structured analytical context. The result describes the dataset, its columns, likely semantic roles, candidate keys, possible grain, relationships, and analytical warnings.
