@@ -1,5 +1,5 @@
 <p align="center">
-  <img alt="Oribi logo" src="./branding/oribi-logo-light.svg" width="320">
+  <img alt="Oribi logo" src="./branding/oribi-logo-readme.svg" width="352">
 </p>
 
 # Oribi
