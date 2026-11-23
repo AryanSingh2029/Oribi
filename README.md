@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./branding/oribi-logo-dark.svg">
+    <img alt="Oribi logo" src="./branding/oribi-logo-light.svg" width="320">
+  </picture>
+</p>
+
 # Oribi
 
 **Give AI a useful picture of your data before it starts analyzing it.**
