@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./branding/oribi-logo-dark.svg">
-    <img alt="Oribi logo" src="./branding/oribi-logo-light.svg" width="320">
-  </picture>
+  <img alt="Oribi logo" src="./branding/oribi-logo-readme.svg" width="320">
 </p>
 
 # Oribi
