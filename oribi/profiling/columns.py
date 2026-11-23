@@ -140,26 +140,36 @@ def profile_column(
             # the finite subset so no warning is raised; infinities are simply
             # excluded rather than turning the whole statistic into NaN.
             finite = numeric[numeric.map(math.isfinite)]
+            # Reductions run in float64: narrow dtypes overflow on intermediate
+            # values. Squaring a float16 deviation from a large mean, or
+            # interpolating between float16 quantiles, can yield inf/NaN even
+            # when the input values and the correct result are finite. Every
+            # supported float value is exactly representable in float64.
+            sample = (
+                finite.astype("float64")
+                if pd.api.types.is_float_dtype(finite.dtype)
+                else finite
+            )
             if pd.api.types.is_float_dtype(finite.dtype):
                 # Use the already-filtered finite values; Arrow-backed Series
                 # do not implement modulo.
-                has_fractional_values = bool(((finite.to_numpy() % 1) != 0).any())
+                has_fractional_values = bool(((sample.to_numpy() % 1) != 0).any())
             values.update(
                 minimum=finite.min() if len(finite) else None,
                 maximum=finite.max() if len(finite) else None,
-                mean=finite_or_none(finite.mean()) if len(finite) else None,
-                median=finite_or_none(finite.median()) if len(finite) else None,
-                standard_deviation=finite_or_none(finite.std()) if len(finite) > 1 else None,
+                mean=finite_or_none(sample.mean()) if len(sample) else None,
+                median=finite_or_none(sample.median()) if len(sample) else None,
+                standard_deviation=finite_or_none(sample.std()) if len(sample) > 1 else None,
             )
             values["zero_count"] = int((numeric == 0).sum())
             values["negative_count"] = int((numeric < 0).sum())
             if include_quantiles:
                 values["quantiles"] = (
-                    {str(q): finite_or_none(v) for q, v in finite.quantile([.25, .5, .75]).items()}
-                    if len(finite) else {}
+                    {str(q): finite_or_none(v) for q, v in sample.quantile([.25, .5, .75]).items()}
+                    if len(sample) else {}
                 )
-            if len(finite) >= 3 and finite.nunique() > 1:
-                values["skewness"] = finite_or_none(finite.skew())
+            if len(sample) >= 3 and sample.nunique() > 1:
+                values["skewness"] = finite_or_none(sample.skew())
     elif obs.logical_type == "temporal" and len(non_null):
         values["minimum"] = non_null.min()
         values["maximum"] = non_null.max()

@@ -15,6 +15,30 @@ def test_large_integer_bounds_keep_exact_precision():
     assert statistics["maximum"] == values[1]
 
 
+@pytest.mark.parametrize(
+    "dtype,readings",
+    [
+        (np.float16, np.array([-65000, 65000], dtype=np.float16)),
+        (np.float32, np.array([-3e38, 3e38], dtype=np.float32)),
+    ],
+)
+def test_narrow_float_statistics_do_not_overflow(dtype, readings):
+    # Squaring a deviation from a large mean overflows the narrow dtype even
+    # though every input and every correct statistic is finite.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        narrow = inspect(pd.DataFrame({"revenue": readings})).get_column("revenue").statistics
+        wide = (
+            inspect(pd.DataFrame({"revenue": readings.astype(np.float64)}))
+            .get_column("revenue")
+            .statistics
+        )
+
+    assert narrow.mean == wide.mean
+    assert narrow.standard_deviation == pytest.approx(wide.standard_deviation)
+    assert narrow.quantiles == pytest.approx(wide.quantiles)
+
+
 @pytest.mark.parametrize("dtype,base", [("Int64", -(2**63)), ("UInt64", 2**63)])
 def test_nullable_integer_skew_with_large_adjacent_values(dtype, base):
     values = pd.Series([base + 1, base + 2, base + 3], dtype=dtype)
